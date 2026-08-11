@@ -1,0 +1,258 @@
+# ============================================================
+# Python
+# ============================================================
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ============================================================
+# Virtual environments
+# ============================================================
+
+venv/
+.venv/
+env/
+ENV/
+conda-env/
+
+# ============================================================
+# IDE / editor
+# ============================================================
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ============================================================
+# OS files
+# ============================================================
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============================================================
+# Generated outputs
+# ============================================================
+
+outputs/
+output/
+results/
+runs/
+logs/
+tmp/
+temp/
+
+# ScenarioGenerator generated files
+ScenarioGenerator/examples/generated/
+ScenarioGenerator/examples/resolved/
+
+# ============================================================
+# Videos
+# ============================================================
+
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+
+# ============================================================
+# Generated frames / renders
+# ============================================================
+
+frames/
+rendered_frames/
+renders/
+
+# ============================================================
+# Model checkpoints / weights
+# ============================================================
+
+*.pt
+*.pth
+*.ckpt
+*.weights
+*.onnx
+*.engine
+
+checkpoints/
+weights/
+
+# ============================================================
+# Large datasets
+# ============================================================
+
+datasets/
+dataset/
+
+# ============================================================
+# HEPlacementModel generated / lookup data
+# ============================================================
+
+HE_PlacementModel/**/labels.jsonl
+HE_PlacementModel/**/lookup/
+HE_PlacementModel/**/lookup_dataset/
+HE_PlacementModel/**/generated/
+HE_PlacementModel/**/recordings/
+HE_PlacementModel/**/outputs/
+
+# ============================================================
+# HE_v_0.1 generated content
+# ============================================================
+
+HE_v_0.1/recordings/
+HE_v_0.1/outputs/
+HE_v_0.1/output/
+HE_v_0.1/generated/
+HE_v_0.1/renders/
+
+# ============================================================
+# Binary / array data
+# ============================================================
+
+*.npy
+*.npz
+*.pkl
+*.pickle
+
+# ============================================================
+# Logs / temporary
+# ============================================================
+
+*.log
+
+# ============================================================
+# Build
+# ============================================================
+
+build/
+dist/
+*.egg-info/
+.coverage
+htmlcov/
+
+# ============================================================
+# HE_v_0.1 project-specific generated data
+# ============================================================
+
+HE_v_0.1/carla_recordings/
+HE_v_0.1/he_outputs/
+HE_v_0.1/paired_data/
+HE_v_0.1/real_video_he_outputs/
+HE_v_0.1/recordings/
+
+HE_v_0.1/box_dataset/
+HE_v_0.1/refiner_dataset/
+
+HE_v_0.1/box_predictor_checkpoints/
+HE_v_0.1/refiner_checkpoints/
+
+# Old archives
+*.zip
+
+# Generated test/output images
+*_output.png
+*_comparison.png
+
+# ============================================================
+# HE Placement Model large/generated content
+# ============================================================
+
+HE_PlacementModel/**/outputs/
+HE_PlacementModel/**/output/
+HE_PlacementModel/**/datasets/
+HE_PlacementModel/**/dataset/
+HE_PlacementModel/**/recordings/
+HE_PlacementModel/**/checkpoints/
+HE_PlacementModel/**/weights/
+HE_PlacementModel/**/generated/
+
+*.jsonl
+
+# ============================================================
+# HE_v_0.1 - large/generated assets
+# ============================================================
+
+# ~2.2 GB generated/local assets:
+# placement lookup tables, semantic debug,
+# sprite banks, RGB candidates, etc.
+HE_v_0.1/assets/
+
+# Generated datasets / recordings / outputs
+HE_v_0.1/box_dataset/
+HE_v_0.1/refiner_dataset/
+
+HE_v_0.1/box_predictor_checkpoints/
+HE_v_0.1/refiner_checkpoints/
+
+HE_v_0.1/carla_recordings/
+HE_v_0.1/he_outputs/
+HE_v_0.1/paired_data/
+HE_v_0.1/real_video_he_outputs/
+HE_v_0.1/recordings/
+
+# ============================================================
+# HE Placement Model - generated data
+# ============================================================
+
+HE_PlacementModel/HEPlacementModel/dataset/
+HE_PlacementModel/HEPlacementModel/outputs/
+HE_PlacementModel/HEPlacementModel/debug_vis/
+
+# Keep these:
+# HE_PlacementModel/HEPlacementModel/configs/
+# HE_PlacementModel/HEPlacementModel/data_generation/
+# HE_PlacementModel/HEPlacementModel/model/
+# HE_PlacementModel/HEPlacementModel/runtime/
+
+# ============================================================
+# ScenarioGenerator - generated scenarios
+# ============================================================
+
+ScenarioGenerator/examples/generated/
+ScenarioGenerator/examples/resolved/
+
+# ============================================================
+# Large/generated file types
+# ============================================================
+
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.engine
+*.weights
+
+*.npy
+*.npz
+*.jsonl
+
+*.zip
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+

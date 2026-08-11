@@ -1,0 +1,16 @@
+from .scenario_schema import (
+    ActorRole,
+    ActorType,
+    ManeuverType,
+    TrajectoryMode,
+    CameraConfig,
+    CameraViewConfig,
+    CameraRigConfig,
+    EgoConfig,
+    RoadConfig,
+    ActorSpec,
+    TrajectorySpec,
+    ScenarioSpec,
+    ResolvedActorFrame,
+    ResolvedScenario,
+)

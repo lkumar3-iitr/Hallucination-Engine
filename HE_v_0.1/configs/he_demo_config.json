@@ -1,0 +1,85 @@
+{
+    "simulation": {
+        "host": "127.0.0.1",
+        "port": 2000,
+        "timeout": 10.0,
+        "fixed_delta_seconds": 0.05
+    },
+
+    "camera": {
+        "image_width": 1280,
+        "image_height": 720,
+        "fov": 100.0,
+        "x": 0.35,
+        "y": -0.30,
+        "z": 1.40,
+        "pitch": -3.0,
+        "yaw": 0.0,
+        "roll": 0.0
+    },
+
+    "hallucination": {
+    "he_mode": "camera_only",
+    "enabled": true,
+    "scenario_type": "wrong_way_vehicle",
+
+    "trigger_frame": 30,
+    "duration_frames": 120,
+
+    "initial_distance_m": 35.0,
+    "min_distance_m": 5.0,
+    "relative_speed_mps": 2.5,
+
+    "use_ego_speed_for_relative_motion": true,
+    "adversary_speed_mps": 5.0,
+    "max_closing_speed_mps": 25.0,
+
+    "lateral_offset_m": 0.0,
+
+    "vehicle_length_m": 4.5,
+    "vehicle_width_m": 1.9,
+    "vehicle_height_m": 1.6,
+
+    "render_mode": "sprite",
+
+    "sprite_path": "assets/sprites/car_front.png",
+    "sprite_alpha": 1.0,
+    "sprite_vertical_scale": 1.15,
+    "sprite_horizontal_scale": 1.10,
+    "saving": {
+        "base_dir": "he_outputs",
+        "save_only_active": true,
+        "save_frames": false,
+        "save_metadata": true
+    },
+    "sprite_y_offset_ratio": 0.0,
+    "draw_sprite_debug_box": false,
+
+    "wrong_way_sprite_path": "assets/sprites/car_front.png",
+    "stopped_vehicle_sprite_path": "assets/sprites/car_front.png",
+
+    "match_brightness": true,
+    "add_shadow": true,
+    "soften_edges": true,
+    "motion_blur": false,
+
+    "spawn_y_ratio": 0.55,
+    "target_y_ratio": 0.88,
+
+    "min_box_width": 70,
+    "max_box_width": 520,
+    "min_box_height": 55,
+    "max_box_height": 430,
+
+    "repeat_after_finish": true,
+    "repeat_gap_frames": 30,
+
+    "use_visual_road_estimator": true,
+    "road_estimator_roi_y_start_ratio": 0.55,
+    "road_estimator_roi_y_end_ratio": 0.95,
+    "road_center_smoothing_alpha": 0.75,
+
+    "road_follow_base_gain": 0.12,
+    "road_follow_conf_gain": 0.35
+    }
+}

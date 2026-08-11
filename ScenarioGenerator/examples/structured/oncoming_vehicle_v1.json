@@ -1,0 +1,51 @@
+{
+  "scenario_id": "example_oncoming_vehicle_v1",
+  "description": "One oncoming vehicle approaches ego in the opposite lane.",
+  "duration_s": 8.0,
+  "fps": 10,
+  "camera": {
+    "image_width": 1280,
+    "image_height": 720,
+    "fov": 90.0,
+    "camera_x": 1.5,
+    "camera_y": 0.0,
+    "camera_z": 1.6,
+    "pitch": 0.0,
+    "yaw": 0.0,
+    "roll": 0.0
+  },
+  "ego": {
+    "initial_x_m": 0.0,
+    "initial_y_m": 0.0,
+    "initial_yaw_deg": 0.0,
+    "speed_mps": 5.0
+  },
+  "road": {
+    "lane_width_m": 3.5,
+    "num_lanes_same_direction": 1,
+    "num_lanes_opposite_direction": 1,
+    "ego_lane_index": 0,
+    "road_length_m": 120.0
+  },
+  "actors": [
+    {
+      "actor_id": "adv_001",
+      "role": "adversary",
+      "actor_type": "vehicle",
+      "blueprint": "vehicle.sedan.generic",
+      "initial_x_m": 55.0,
+      "initial_y_m": -3.5,
+      "initial_yaw_deg": 180.0,
+      "initial_speed_mps": 8.0,
+      "dimensions_m": [4.5, 1.8, 1.6],
+      "trajectory": {
+        "mode": "rule_based",
+        "maneuver": "oncoming",
+        "params": {
+          "speed_mps": 8.0,
+          "target_lane_y_m": -3.5
+        }
+      }
+    }
+  ]
+}

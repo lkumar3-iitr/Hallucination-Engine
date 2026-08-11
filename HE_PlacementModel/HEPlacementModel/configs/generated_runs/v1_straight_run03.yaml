@@ -1,0 +1,40 @@
+carla:
+  host: 127.0.0.1
+  port: 2000
+  town: Town10HD_Opt
+  fixed_delta_seconds: 0.05
+camera:
+  width: 1280
+  height: 720
+  fov: 90
+  mount_x: 1.5
+  mount_y: 0.0
+  mount_z: 1.6
+  pitch: 0.0
+  yaw: 0.0
+  roll: 0.0
+quality_filter:
+  enabled: true
+  require_fully_inside: true
+  edge_margin_px: 20
+  vehicle_semantic_label: 10
+  min_vehicle_pixel_ratio: 0.0
+  min_clean_box_width_px: 16
+  min_clean_box_height_px: 16
+  max_attempts_multiplier: 20
+sampling:
+  num_samples: 10000
+  rel_x_min: -7.0
+  rel_x_max: 7.0
+  rel_z_min: 8.0
+  rel_z_max: 80.0
+  rel_yaw_min: -180.0
+  rel_yaw_max: 180.0
+visibility:
+  min_bbox_width_px: 2
+  min_bbox_height_px: 2
+  require_in_front: true
+output:
+  dataset_dir: dataset/v1_straight_run03
+  save_debug_images: true
+  debug_image_limit: 100

@@ -1,0 +1,139 @@
+{
+  "schema_version": "he_scenario_v1",
+  "scenario_id": "lateral_offset_approaching_001",
+  "description": "One hallucinated vehicle approaches the ego camera while moving laterally across the image.",
+
+  "input": {
+    "video_path": "recordings/ego_straight_static_400.mp4"
+  },
+
+  "output": {
+    "output_dir": "he_outputs/lateral_offset_approaching_001",
+    "save_frames": false,
+    "save_masks": true,
+    "save_metadata": true,
+    "output_video_name": "lateral_offset_approaching_001.mp4"
+  },
+  
+  "ego_motion": {
+    "enabled": true,
+    "mode": "constant_forward_speed",
+    "speed_mps": 5.0
+  },
+
+  "camera": {
+    "model": "heplacement_model_camera",
+    "image_width": 1280,
+    "image_height": 720,
+    "fov": 90.0,
+    "intrinsics": {
+      "fx": 640.0,
+      "fy": 640.0,
+      "cx": 640.0,
+      "cy": 360.0
+    },
+
+    "placement": {
+        "ground_y_m": 1.35
+    },
+
+    "road_contact_model": {
+        "type": "z_to_bottom_y_keypoints",
+        "keypoints": [
+        {"z_m": 45.0, "bottom_y": 255.0},
+        {"z_m": 30.0, "bottom_y": 285.0},
+        {"z_m": 20.0, "bottom_y": 330.0},
+        {"z_m": 15.0, "bottom_y": 370.0}
+        ]
+    },
+
+    "image_coordinate_system": {
+        "x": "right",
+        "y": "down",
+        "origin": "top_left"
+    }
+    },
+
+
+  "timeline": {
+    "start_frame": 0,
+    "end_frame": 150,
+    "fps": 30.0
+  },
+
+  "placement_model": {
+    "enabled": true,
+    "type": "heplacement_v2_lookup",
+    "labels_path": "HallucinationEngine/models/HEPlacementModel/v2_lookup/labels.jsonl",
+    "metadata_path": "HallucinationEngine/models/HEPlacementModel/v2_lookup/metadata.json",
+    "method": "interpolated",
+    "mode": "clamp",
+    "safe_distance_margin_m": 5.0
+  },
+
+  "placement_runtime_correction": {
+    "enabled": false,
+    "rel_x_sign": 1.0,
+    "rel_z_scale": 1.0,
+    "rel_z_offset": 0.0,
+    "rel_yaw_offset_deg": 0.0,
+    "center_x_offset_px": 0.0,
+    "center_x_scale_about_center": 1.0,
+    "bottom_y_offset_px": -1.0,
+    "bottom_y_scale_about_horizon": 0.55,
+    "horizon_y_px": 300.0,
+    "box_w_scale": 1.0,
+    "box_h_scale": 1.0
+  },
+
+  "sprite_bank": {
+    "root": "assets/sprite_bank_rgba/vehicle_blue_sedan",
+    "rgba_dir": "rgba",
+    "angle_format": "angle_{angle:03d}_rgba.png",
+
+    "angle_convention": {
+      "0": "rear_view",
+      "90": "side_view",
+      "180": "front_view",
+      "270": "opposite_side_view"
+    }
+  },
+
+  "adversaries": [
+    {
+      "id": "adv_vehicle_1",
+      "type": "vehicle",
+      "enabled": true,
+
+      "size": {
+        "length_m": 4.5,
+        "width_m": 1.8,
+        "height_m": 1.5
+      },
+
+      "initial_state": {
+        "x_m": -2.0,
+        "y_m": 0.0,
+        "z_m": 45.0,
+        "yaw_deg": 180.0
+      },
+
+      "motion": {
+        "model": "constant_velocity",
+        "velocity": {
+          "x_mps": 0.8,
+          "y_mps": 0.0,
+          "z_mps": -6.0
+        }
+      },
+
+      "rendering": {
+        "alpha": 1.0,
+        "angle_mode": "relative_yaw",
+        "angle_smoothing": false,
+        "shadow": false,
+        "refiner": false
+      }
+    }
+  ]
+}
