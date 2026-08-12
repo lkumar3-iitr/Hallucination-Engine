@@ -56,37 +56,24 @@ def _make_scenario_id(
 def side_to_lane_y(
     side: SideType,
     lane_width_m: float = 3.5,
-    current_he_visual_convention: bool = True,
 ) -> float:
-    """Map side label to local lateral y.
+    """
+    Convert semantic side to ScenarioGenerator BEV coordinates.
 
-    Important:
-    In the abstract BEV convention, positive y was originally described as left.
-    But in the current HE visual output that worked well, the tested right cut-in
-    used initial_y_m = +3.5.
+    ScenarioGenerator convention:
+        +y = left
+        -y = right
 
-    Therefore, for the current HE-compatible factory:
-      right -> +lane_width
-      left  -> -lane_width
-
-    Later, if we strictly separate abstract world coordinates and HE image
-    convention, we can move this sign mapping into the backend adapter.
+    Backend-specific coordinate conversion must NOT happen here.
     """
 
-    if current_he_visual_convention:
-        if side == "right":
-            return +lane_width_m
-        if side == "left":
-            return -lane_width_m
-
-    # Strict abstract BEV convention fallback.
-    if side == "right":
-        return -lane_width_m
     if side == "left":
-        return +lane_width_m
+        return +float(lane_width_m)
+
+    if side == "right":
+        return -float(lane_width_m)
 
     raise ValueError(f"Unsupported side: {side}")
-
 
 def make_static_scenario(
     start_distance_m: float = 30.0,
@@ -259,7 +246,6 @@ def make_cut_in_scenario(
     start_lane_y_m = side_to_lane_y(
         side=side,
         lane_width_m=lane_width_m,
-        current_he_visual_convention=True,
     )
 
     if scenario_id is None:
@@ -341,7 +327,6 @@ def make_crossing_scenario(
         start_lane_y_m = side_to_lane_y(
             side=side,
             lane_width_m=lane_width_m,
-            current_he_visual_convention=True,
         ) * 2.0
 
     if side == "right":

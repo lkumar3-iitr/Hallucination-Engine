@@ -32,6 +32,27 @@ class TrajectoryMode(str, Enum):
     OPTIMIZATION_BASED = "optimization_based"
     LEARNING_BASED = "learning_based"
 
+class EgoMotionType(str, Enum):
+    STATIC = "static"
+    STRAIGHT = "straight"
+    LEFT_TURN = "left_turn"
+    RIGHT_TURN = "right_turn"
+
+class EgoMotionSpec(BaseModel):
+    """
+    Ego trajectory description before resolution.
+
+    Coordinate convention:
+    - x: forward
+    - y: lateral, positive left
+    - yaw_deg: positive means turning left
+    """
+
+    motion: EgoMotionType = EgoMotionType.STRAIGHT
+
+    turn_start_s: float = 0.0
+    turn_duration_s: float = 0.0
+    turn_yaw_deg: float = 0.0
 
 class CameraConfig(BaseModel):
     """Fixed camera convention used by HEPlacementModel v2."""
@@ -94,19 +115,23 @@ class CameraRigConfig(BaseModel):
             ],
         )
 class EgoConfig(BaseModel):
-    """Ego state in local BEV coordinates.
+    """
+    Ego initial state and requested motion in local BEV coordinates.
 
-    Coordinate convention v1:
-    - Ego starts at x=0, y=0.
-    - x is forward in meters.
-    - y is lateral in meters. Positive y means left of ego lane center.
-    - yaw_deg=0 means facing forward along +x.
+    Coordinate convention:
+    - x: forward
+    - y: lateral, positive left
+    - yaw_deg=0: forward
+    - positive yaw: left turn
+    - negative yaw: right turn
     """
 
     initial_x_m: float = 0.0
     initial_y_m: float = 0.0
     initial_yaw_deg: float = 0.0
     speed_mps: float = 5.0
+
+    motion: EgoMotionSpec = Field(default_factory=EgoMotionSpec)
 
 
 class RoadConfig(BaseModel):
@@ -170,31 +195,90 @@ class ScenarioSpec(BaseModel):
         return self
 
 
-class ResolvedActorFrame(BaseModel):
+class ResolvedEgoFrame(BaseModel):
+    """
+    Backend-independent resolved ego state.
+
+    All coordinates are expressed in the scenario's local
+    ego-initial BEV coordinate frame.
+    """
+
     frame_idx: int
     t_s: float
 
-    actor_id: str
     x_m: float
     y_m: float
     yaw_deg: float
+
     speed_mps: float
 
-    # These are later filled by HEPlacementModel or HE adapter if needed.
-    visible: Optional[bool] = None
-    center_x: Optional[float] = None
-    bottom_y: Optional[float] = None
-    box_width: Optional[float] = None
-    box_height: Optional[float] = None
+    vx_mps: float
+    vy_mps: float
+
+
+class ResolvedActorInfo(BaseModel):
+    """
+    Static actor information that does not need to be repeated
+    in every frame.
+    """
+
+    actor_id: str
+    role: ActorRole
+    actor_type: ActorType
+    blueprint: str
+
+    dimensions_m: Tuple[float, float, float]
+
+
+class ResolvedActorFrame(BaseModel):
+    """
+    Backend-independent physical actor state.
+
+    IMPORTANT:
+    No camera visibility, bbox, placement, sprite, or rendering
+    information belongs here.
+    """
+
+    frame_idx: int
+    t_s: float
+    actor_id: str
+
+    x_m: float
+    y_m: float
+    yaw_deg: float
+
+    speed_mps: float
+
+    vx_mps: float
+    vy_mps: float
 
 
 class ResolvedScenario(BaseModel):
+    """
+    Fully resolved physical scenario shared by all execution backends.
+
+    Both CARLA and HE must consume this same representation.
+    """
+
     scenario_id: str
     source_description: str
+
     duration_s: float
     fps: int
+
+    # All resolved poses currently use the initial ego frame.
+    coordinate_frame: Literal["ego_initial"] = "ego_initial"
+
     camera: CameraConfig
     camera_rig: Optional[CameraRigConfig] = None
-    ego: EgoConfig
+
     road: RoadConfig
+
+    # Static actor properties.
+    actors: List[ResolvedActorInfo]
+
+    # Physical ego trajectory.
+    ego_frames: List[ResolvedEgoFrame]
+
+    # Physical trajectories of all non-ego actors.
     frames: List[ResolvedActorFrame]

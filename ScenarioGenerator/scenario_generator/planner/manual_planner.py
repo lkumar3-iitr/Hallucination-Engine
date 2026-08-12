@@ -129,7 +129,7 @@ def make_cut_in_from_right_demo() -> ScenarioSpec:
 
     actor = scenario.actors[0]
     actor.initial_x_m = 28.0
-    actor.initial_y_m = 3.5
+    actor.initial_y_m = -3.5
     actor.initial_yaw_deg = 0.0
     actor.initial_speed_mps = 4.0
     actor.trajectory.params["target_y_m"] = 0.0
@@ -147,7 +147,7 @@ def make_cut_in_from_left_demo() -> ScenarioSpec:
 
     actor = scenario.actors[0]
     actor.initial_x_m = 28.0
-    actor.initial_y_m = -3.5
+    actor.initial_y_m = 3.5
     actor.initial_yaw_deg = 0.0
     actor.initial_speed_mps = 4.0
     actor.trajectory.params["target_y_m"] = 0.0

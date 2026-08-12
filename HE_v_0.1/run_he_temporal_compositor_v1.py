@@ -1185,6 +1185,69 @@ def compute_constant_velocity_heading(adversary):
     return vx, vz
 
 
+def compute_viewpoint_sprite_angle(state):
+    """
+    Compute which physical side of the actor is visible from the camera.
+
+    IMPORTANT:
+    This is NOT simply the actor yaw relative to the camera.
+
+    state is already in the current camera coordinate frame:
+
+        x_m      = actor lateral position relative to camera
+                   negative = left, positive = right
+
+        z_m      = actor forward depth relative to camera
+
+        yaw_deg  = actor heading relative to current camera heading
+
+    Sprite-bank convention:
+
+        0 deg   = rear
+        90 deg  = one side
+        180 deg = front
+        270 deg = opposite side
+
+    The camera-to-actor bearing is:
+
+        bearing = atan2(x_m, z_m)
+
+    The actual viewpoint around the vehicle is the bearing relative
+    to the actor's own heading:
+
+        sprite_angle = bearing - actor_relative_yaw
+
+    This has an important property:
+
+    If the camera rotates in place, both bearing and actor-relative
+    yaw change by the same amount, so the selected sprite does NOT
+    change.
+
+    The sprite changes only when the physical viewpoint around the
+    actor changes because:
+        - actor rotates,
+        - actor translates,
+        - camera/ego translates,
+        - or a combination of these.
+    """
+
+    x_m = float(state.get("x_m", 0.0))
+    z_m = float(state.get("z_m", 0.0))
+    actor_relative_yaw_deg = float(state.get("yaw_deg", 0.0))
+
+    # Direction from the camera toward the actor, expressed in the
+    # current camera horizontal coordinate system.
+    bearing_deg = math.degrees(
+        math.atan2(x_m, z_m)
+    )
+
+    viewpoint_angle_deg = (
+        bearing_deg - actor_relative_yaw_deg
+    )
+
+    return normalize_angle_360(viewpoint_angle_deg)
+
+
 def compute_sprite_angle_for_adversary(
     state,
     adversary,
@@ -1193,87 +1256,16 @@ def compute_sprite_angle_for_adversary(
     t_sec=0.0,
 ):
     """
-    Select sprite angle using the requested rendering.angle_mode.
+    Select the sprite from the physical camera-to-actor viewpoint.
 
-    Supported angle modes:
-      relative_yaw:
-        Use state["yaw_deg"] directly.
+    camera_yaw_deg, frame_idx and t_sec are retained in the signature
+    for compatibility with the existing compositor call site.
 
-      velocity_direction:
-        Use constant velocity direction.
-
-      trajectory_tangent:
-        For keyframed trajectories, infer heading from neighboring keyframes.
-
-    Recommended:
-      static/oncoming: relative_yaw or velocity_direction
-      cut-in/crossing/lane-change: trajectory_tangent
+    Actor orientation and camera rotation have already been accounted
+    for in `state`, so camera yaw must not be applied again here.
     """
 
-    rendering = adversary.get("rendering", {})
-    angle_mode = rendering.get("angle_mode", "relative_yaw")
-
-    lateral_sign_for_angle = float(
-        rendering.get("angle_lateral_sign", -1.0)
-    )
-
-    lateral_deadzone_ratio = float(
-        rendering.get("angle_lateral_deadzone_ratio", 0.12)
-    )
-        
-    fallback_yaw = float(state.get("yaw_deg", 0.0))
-
-    if angle_mode == "relative_yaw":
-        vehicle_yaw_deg = fallback_yaw
-
-    elif angle_mode == "velocity_direction":
-        vx, vz = compute_constant_velocity_heading(adversary)
-        vehicle_yaw_deg = compute_heading_yaw_from_velocity(
-            vx_mps=vx,
-            vz_mps=vz,
-            fallback_yaw_deg=fallback_yaw,
-            lateral_sign_for_angle=lateral_sign_for_angle,
-            lateral_deadzone_ratio=lateral_deadzone_ratio,
-        )
-
-    elif angle_mode == "trajectory_tangent":
-        model = adversary.get("motion", {}).get("model", "")
-
-        if model == "keyframed_trajectory":
-            if frame_idx is None:
-                vehicle_yaw_deg = fallback_yaw
-            else:
-                vx, vz = compute_keyframed_velocity_at_frame(
-                    adversary=adversary,
-                    frame_idx=frame_idx,
-                    t_sec=t_sec,
-                )
-                vehicle_yaw_deg = compute_heading_yaw_from_velocity(
-                    vx_mps=vx,
-                    vz_mps=vz,
-                    fallback_yaw_deg=fallback_yaw,
-                    lateral_sign_for_angle=lateral_sign_for_angle,
-                    lateral_deadzone_ratio=lateral_deadzone_ratio,
-                )
-        elif model == "constant_velocity":
-            vx, vz = compute_constant_velocity_heading(adversary)
-            vehicle_yaw_deg = compute_heading_yaw_from_velocity(
-                vx_mps=vx,
-                vz_mps=vz,
-                fallback_yaw_deg=fallback_yaw,
-                lateral_sign_for_angle=lateral_sign_for_angle,
-                lateral_deadzone_ratio=lateral_deadzone_ratio,
-            )
-        else:
-            vehicle_yaw_deg = fallback_yaw
-
-    else:
-        print(f"[WARN] Unsupported angle_mode={angle_mode}, using relative_yaw")
-        vehicle_yaw_deg = fallback_yaw
-
-    relative_angle = vehicle_yaw_deg - float(camera_yaw_deg)
-    return normalize_angle_360(relative_angle)
-
+    return compute_viewpoint_sprite_angle(state)
 def discover_available_sprite_angles(sprite_bank):
     root = Path(sprite_bank["root"])
     rgba_dir = sprite_bank.get("rgba_dir", "rgba")
@@ -1779,7 +1771,10 @@ def run_scenario(scenario, overwrite=False):
 
                 adv_meta.update({
                     "relative_angle_deg": relative_angle,
-                    "angle_mode": adv.get("rendering", {}).get("angle_mode", "relative_yaw"),
+                    "angle_mode": adv.get("rendering", {}).get(
+                        "angle_mode",
+                        "viewpoint"
+                    ),
                     "sprite": sprite_info,
                     "paste": {
                         "x1": paste_x1,
