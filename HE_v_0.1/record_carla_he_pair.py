@@ -139,14 +139,16 @@ def project_world_point_to_image(world_point, world_to_camera, k):
     return u, v, depth
 
 
-def compute_actor_2d_bbox(actor, camera, width, height, fov):
+def compute_actor_2d_bbox(actor, camera_transform, width, height, fov):
     """
     Project actor 3D bounding box into the camera image.
     Returns visible bbox in pixel coordinates.
     """
 
     k = make_camera_intrinsic(width, height, fov)
-    world_to_camera = np.array(camera.get_transform().get_inverse_matrix())
+    world_to_camera = np.array(
+        camera_transform.get_inverse_matrix()
+    )
 
     bb = actor.bounding_box
     vertices = bb.get_world_vertices(actor.get_transform())
@@ -378,6 +380,50 @@ def spawn_actor_safe(world, blueprint, transform):
 
     return actor
 
+def settle_ego_on_road(world, ego, settle_frames=30):
+    """
+    Let the ego vehicle settle naturally onto the CARLA road before
+    switching to deterministic scripted motion.
+
+    This is important because CARLA spawn points may start the vehicle
+    slightly above the road. HEPlacementModel v2 was calibrated using
+    an ego vehicle that had physically settled before the camera pose
+    was locked.
+    """
+
+    ego.set_simulate_physics(True)
+    ego.set_autopilot(False)
+
+    # Hold the vehicle stationary while gravity settles it.
+    ego.apply_control(
+        carla.VehicleControl(
+            throttle=0.0,
+            steer=0.0,
+            brake=1.0,
+            hand_brake=False,
+        )
+    )
+
+    for _ in range(int(settle_frames)):
+        world.tick()
+
+    settled_tf = ego.get_transform()
+
+    print(
+        "[INFO] Ego settled transform: "
+        f"x={settled_tf.location.x:.6f}, "
+        f"y={settled_tf.location.y:.6f}, "
+        f"z={settled_tf.location.z:.6f}, "
+        f"pitch={settled_tf.rotation.pitch:.6f}, "
+        f"yaw={settled_tf.rotation.yaw:.6f}, "
+        f"roll={settled_tf.rotation.roll:.6f}"
+    )
+
+    # From this point onward the pair recorder controls the pose itself.
+    ego.set_simulate_physics(False)
+    ego.set_transform(settled_tf)
+
+    return settled_tf
 
 def make_rgb_camera(world, ego, args):
     camera_bp = get_blueprint(world, "sensor.camera.rgb")
@@ -408,6 +454,32 @@ def image_to_rgb_array(image):
     rgb = array[:, :, :3][:, :, ::-1]  # BGRA -> RGB
     return rgb
 
+def get_image_for_carla_frame(image_queue, target_frame, timeout=5.0):
+    """
+    Return the RGB sensor measurement belonging exactly to target_frame.
+
+    In synchronous CARLA execution we want:
+        world frame N
+        RGB image frame N
+        image.transform from frame N
+
+    Any stale sensor measurements are discarded. A future-frame image
+    indicates a synchronization problem and aborts the recording.
+    """
+    while True:
+        image = image_queue.get(timeout=timeout)
+
+        if int(image.frame) < int(target_frame):
+            # Stale measurement left in the queue.
+            continue
+
+        if int(image.frame) > int(target_frame):
+            raise RuntimeError(
+                f"RGB sensor skipped target CARLA frame {target_frame}; "
+                f"received frame {image.frame}"
+            )
+
+        return image
 
 # ============================================================
 # Main recording
@@ -459,11 +531,21 @@ def run(args):
                 f"Available: 0 to {len(spawn_points)-1}"
             )
 
-        spawn_tf = spawn_points[args.spawn_index]
+        ego0_tf = spawn_points[args.spawn_index]
 
-        ego = spawn_actor_safe(world, vehicle_bp, spawn_tf)
-        ego.set_simulate_physics(False)
+        ego = spawn_actor_safe(world, vehicle_bp, ego0_tf)
         actors.append(ego)
+
+        # IMPORTANT:
+        # CARLA spawn points may place the vehicle reference frame above the
+        # actual road surface. HEPlacementModel v2 was calibrated after the
+        # Tesla ego had physically settled on the road, so reproduce that
+        # convention here before locking deterministic motion.
+        ego0_tf = settle_ego_on_road(
+            world=world,
+            ego=ego,
+            settle_frames=args.ego_settle_frames,
+        )
 
         camera = make_rgb_camera(world, ego, args)
         actors.append(camera)
@@ -475,7 +557,7 @@ def run(args):
         if args.mode == "real_adversary":
             adv_state0 = adversary_local_state_at_time(args, 0.0)
             adv_tf0 = local_ego_initial_to_world_transform(
-                ego0_tf=spawn_tf,
+                ego0_tf=ego0_tf,
                 local_x_m=adv_state0["x_m"],
                 local_y_m=adv_state0["y_m"],
                 local_z_m=adv_state0["z_m"],
@@ -490,7 +572,7 @@ def run(args):
             actors.append(adversary)
 
         ego_poses = generate_scripted_ego_poses(
-            spawn_tf=spawn_tf,
+            spawn_tf=ego0_tf,
             frames=args.frames,
             fps=args.fps,
             speed_mps=args.ego_speed,
@@ -530,9 +612,14 @@ def run(args):
 
         # Warmup.
         for _ in range(args.warmup_frames):
-            world.tick()
+            warmup_frame = world.tick()
+
             try:
-                image_queue.get(timeout=2.0)
+                get_image_for_carla_frame(
+                    image_queue,
+                    target_frame=warmup_frame,
+                    timeout=2.0,
+                )
             except queue.Empty:
                 pass
 
@@ -545,7 +632,7 @@ def run(args):
             if adversary is not None:
                 adv_state = adversary_local_state_at_time(args, t_s)
                 adv_tf = local_ego_initial_to_world_transform(
-                    ego0_tf=spawn_tf,
+                    ego0_tf=ego0_tf,
                     local_x_m=adv_state["x_m"],
                     local_y_m=adv_state["y_m"],
                     local_z_m=adv_state["z_m"],
@@ -556,14 +643,19 @@ def run(args):
                 )
                 adversary.set_transform(adv_tf)
 
-            world.tick()
+            carla_frame = world.tick()
 
-            image = image_queue.get(timeout=5.0)
+            image = get_image_for_carla_frame(
+                image_queue,
+                target_frame=carla_frame,
+                timeout=5.0,
+            )
             rgb = image_to_rgb_array(image)
             bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
             writer.write(bgr)
 
-            camera_tf = camera.get_transform()
+            # Sensor transform corresponding exactly to image.frame.
+            camera_tf = image.transform
 
             ego_record = {
                 "recorded_frame_idx": int(frame_idx),
@@ -603,7 +695,7 @@ def run(args):
 
                 bbox = compute_actor_2d_bbox(
                     actor=adversary,
-                    camera=camera,
+                    camera_transform=camera_tf,
                     width=args.width,
                     height=args.height,
                     fov=args.fov,
@@ -672,7 +764,12 @@ def parse_args():
 
     parser.add_argument("--spawn-index", type=int, default=10)
     parser.add_argument("--warmup-frames", type=int, default=10)
-
+    parser.add_argument(
+        "--ego-settle-frames",
+        type=int,
+        default=30,
+        help="CARLA ticks used to let ego settle onto the road before deterministic recording.",
+    )
     parser.add_argument("--ego-vehicle-filter", default="vehicle.tesla.model3")
     parser.add_argument("--adversary-vehicle-filter", default="vehicle.tesla.model3")
 
