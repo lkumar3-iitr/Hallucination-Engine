@@ -281,7 +281,43 @@ def adversary_local_state_at_time(args, t_s):
     Returns local state in ego-initial coordinates:
       x_m, y_m, z_m, yaw_deg
     """
+    if args.scenario == "crossing":
+        cross_start = float(args.cross_start_s)
+        cross_duration = max(0.01, float(args.cross_duration_s))
 
+        alpha = (float(t_s) - cross_start) / cross_duration
+        alpha = max(0.0, min(1.0, alpha))
+
+        # Constant lateral-speed crossing.
+        x0 = float(args.lane_y)
+        x1 = float(args.target_lane_y)
+
+        x = x0 + (x1 - x0) * alpha
+
+        # Keep the crossing point fixed longitudinally in the
+        # ego-initial/world frame. Since ego itself moves forward,
+        # camera-relative depth will naturally decrease.
+        z = float(args.start_distance)
+
+        # Our convention:
+        #   +x = ego-right
+        #   -x = ego-left
+        #
+        # Moving from negative x toward positive x therefore means
+        # heading +90 degrees relative to ego-initial forward.
+        if x1 > x0:
+            yaw_deg = 90.0
+        elif x1 < x0:
+            yaw_deg = -90.0
+        else:
+            yaw_deg = 0.0
+
+        return {
+            "x_m": float(x),
+            "y_m": 0.0,
+            "z_m": float(z),
+            "yaw_deg": float(yaw_deg),
+        }    
     if args.scenario == "static":
         return {
             "x_m": float(args.lane_y),
@@ -793,7 +829,13 @@ def parse_args():
 
     parser.add_argument(
         "--scenario",
-        choices=["static", "oncoming", "following", "cut_in"],
+        choices=[
+            "static",
+            "oncoming",
+            "following",
+            "cut_in",
+            "crossing",
+        ],
         default="oncoming",
     )
 
@@ -803,7 +845,17 @@ def parse_args():
     parser.add_argument("--adv-speed", type=float, default=8.0)
     parser.add_argument("--cut-start-s", type=float, default=1.5)
     parser.add_argument("--cut-duration-s", type=float, default=3.0)
+    parser.add_argument(
+        "--cross-start-s",
+        type=float,
+        default=0.0,
+    )
 
+    parser.add_argument(
+        "--cross-duration-s",
+        type=float,
+        default=4.0,
+    )
     return parser.parse_args()
 
 

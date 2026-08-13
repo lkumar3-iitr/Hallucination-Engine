@@ -1,0 +1,104 @@
+{
+  "name": "HE Placement and Rendering v1",
+  "status": "FROZEN_VALIDATED",
+  "generated_at": "2026-08-14T00:16:50",
+  "repository_root": "D:\\HallucinationEngine",
+  "canonical_benchmark": "ScenarioGenerator\\outputs\\benchmarks\\geometry_cutin_smoke_v1",
+  "canonical_quantitative_protocol": {
+    "benchmark": "geometry_cutin_smoke_v1",
+    "number_of_cases": 8,
+    "depth_thresholds_m": [
+      15.0,
+      20.0,
+      25.0,
+      30.0
+    ],
+    "geometry_acceptance_threshold": null,
+    "geometry_acceptance_policy": "No post-hoc acceptance threshold was defined. Results are reported as characterization metrics."
+  },
+  "camera": {
+    "width": 1280,
+    "height": 720,
+    "fov_deg": 90.0,
+    "camera_x_m": 1.5,
+    "camera_y_m": 0.0,
+    "camera_z_m": 1.6,
+    "pitch_deg": 0.0,
+    "yaw_deg": 0.0,
+    "roll_deg": 0.0,
+    "fx": 640.0,
+    "fy": 640.0,
+    "cx": 640.0,
+    "cy": 360.0
+  },
+  "placement_domain": {
+    "camera_relative_x_m": [
+      -4.0,
+      4.0
+    ],
+    "camera_relative_z_m": [
+      0.0,
+      100.0
+    ],
+    "yaw_deg": [
+      0.0,
+      359.0
+    ],
+    "visibility_policy": {
+      "min_render_depth_m": 0.0,
+      "behind_camera": "CULLED",
+      "outside_lookup_domain": "PLACEMENT_OOD"
+    }
+  },
+  "placement_lookup": "HE_v_0.1\\assets\\placement_lookup\\heplacement_v2_lookup_camera_relative_x4_0_100_z05_yaw1.npz",
+  "frozen_files": [
+    {
+      "path": "HE_v_0.1\\assets\\placement_lookup\\heplacement_v2_lookup_camera_relative_x4_0_100_z05_yaw1.npz",
+      "exists": true,
+      "sha256": "220c56e15baaae4cdd848eedb2d002647d220f244d9877d05a952e356cd37e19"
+    },
+    {
+      "path": "HE_v_0.1\\run_he_temporal_compositor_v2.py",
+      "exists": true,
+      "sha256": "7dfd59cf4fd7b9cf4d4522155f34014a988ccda6d66deb544f9e14a69eab7a87"
+    },
+    {
+      "path": "HE_v_0.1\\compare_real_vs_he_bbox_v2.py",
+      "exists": true,
+      "sha256": "e5b6f3ba30456e2c80ff4c16a0fa201dbca0bb0be18e9062e90908b075e1cf27"
+    },
+    {
+      "path": "ScenarioGenerator\\scenario_generator\\backends\\he_backend\\current_he_adapter_v2.py",
+      "exists": true,
+      "sha256": "301b95c11805da5d3aefd28016ecf4cbf05a04be38ec06fa57116c9634badd05"
+    },
+    {
+      "path": "ScenarioGenerator\\scenario_generator\\backends\\carla_backend\\carla_adapter_v2.py",
+      "exists": true,
+      "sha256": "e226fa1ef2df7e16a03866081c5bcd135213b78b98e33fb3b0b3555a6e41db9d"
+    },
+    {
+      "path": "ScenarioGenerator\\scenario_generator\\trajectory\\trajectory_resolver_v2.py",
+      "exists": true,
+      "sha256": "fe07b46239c5a469967052a43f1c972c69d3b960730e10544949297936fda780"
+    }
+  ],
+  "coverage_file": "coverage.json",
+  "canonical_outputs": {
+    "validation_results": "validation_results.csv",
+    "depth_results": "depth_results.csv",
+    "summary": "validation_summary.md"
+  },
+  "known_limitations": [
+    "Near-field scale and vertical-placement errors are larger than far-field errors.",
+    "Partial near-camera clipping is not modeled as a separate visibility state.",
+    "General scene occlusion is not fully modeled.",
+    "Placement validity is restricted to the frozen lookup operating domain."
+  ],
+  "freeze_policy": {
+    "lookup_retraining_after_validation": false,
+    "post_hoc_case_specific_tuning": false,
+    "camera_configuration_changes": false,
+    "coordinate_convention_changes": false
+  }
+}

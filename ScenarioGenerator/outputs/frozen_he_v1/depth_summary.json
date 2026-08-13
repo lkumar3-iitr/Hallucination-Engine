@@ -1,0 +1,285 @@
+{
+  "benchmark_id": "geometry_cutin_smoke_v1",
+  "cases": 8,
+  "depth_thresholds_m": [
+    15.0,
+    20.0,
+    25.0,
+    30.0
+  ],
+  "evaluations_expected": 32,
+  "evaluations_completed": 32,
+  "errors": [],
+  "by_depth": {
+    "15.0": {
+      "min_depth_m": 15.0,
+      "cases_total": 8,
+      "cases_with_bbox_samples": 8,
+      "cases_without_bbox_samples": 0,
+      "case_ids_without_bbox_samples": [],
+      "bbox_frames": 1888,
+      "macro_metrics": {
+        "presence_agreement": {
+          "mean": 1.0,
+          "min": 1.0,
+          "max": 1.0
+        },
+        "visibility_agreement": {
+          "mean": 1.0,
+          "min": 1.0,
+          "max": 1.0
+        },
+        "mae_cx_px": {
+          "mean": 2.063,
+          "min": 1.586,
+          "max": 2.797
+        },
+        "mae_bottom_y_px": {
+          "mean": 3.157375,
+          "min": 1.326,
+          "max": 6.292
+        },
+        "mae_width_px": {
+          "mean": 4.26075,
+          "min": 1.707,
+          "max": 8.576
+        },
+        "mae_height_px": {
+          "mean": 2.880875,
+          "min": 1.181,
+          "max": 5.811
+        },
+        "signed_mean_cx_px": {
+          "mean": 1.150625,
+          "min": 0.732,
+          "max": 1.251
+        },
+        "signed_mean_bottom_y_px": {
+          "mean": 3.157375,
+          "min": 1.326,
+          "max": 6.292
+        },
+        "signed_mean_width_px": {
+          "mean": 4.26075,
+          "min": 1.707,
+          "max": 8.576
+        },
+        "signed_mean_height_px": {
+          "mean": 2.880875,
+          "min": 1.181,
+          "max": 5.811
+        }
+      },
+      "frame_weighted_mae": {
+        "mae_cx_px": 2.0530481991525424,
+        "mae_bottom_y_px": 3.09146875,
+        "mae_width_px": 4.169434851694915,
+        "mae_height_px": 2.819258474576271
+      }
+    },
+    "20.0": {
+      "min_depth_m": 20.0,
+      "cases_total": 8,
+      "cases_with_bbox_samples": 8,
+      "cases_without_bbox_samples": 0,
+      "case_ids_without_bbox_samples": [],
+      "bbox_frames": 1609,
+      "macro_metrics": {
+        "presence_agreement": {
+          "mean": 1.0,
+          "min": 1.0,
+          "max": 1.0
+        },
+        "visibility_agreement": {
+          "mean": 1.0,
+          "min": 1.0,
+          "max": 1.0
+        },
+        "mae_cx_px": {
+          "mean": 3.051625,
+          "min": 1.586,
+          "max": 6.64
+        },
+        "mae_bottom_y_px": {
+          "mean": 2.643875,
+          "min": 1.326,
+          "max": 4.262
+        },
+        "mae_width_px": {
+          "mean": 3.6935000000000002,
+          "min": 1.707,
+          "max": 6.481
+        },
+        "mae_height_px": {
+          "mean": 2.397375,
+          "min": 1.181,
+          "max": 3.904
+        },
+        "signed_mean_cx_px": {
+          "mean": 1.71875,
+          "min": 1.133,
+          "max": 3.917
+        },
+        "signed_mean_bottom_y_px": {
+          "mean": 2.643875,
+          "min": 1.326,
+          "max": 4.262
+        },
+        "signed_mean_width_px": {
+          "mean": 3.6935000000000002,
+          "min": 1.707,
+          "max": 6.481
+        },
+        "signed_mean_height_px": {
+          "mean": 2.397375,
+          "min": 1.181,
+          "max": 3.904
+        }
+      },
+      "frame_weighted_mae": {
+        "mae_cx_px": 2.351268489745183,
+        "mae_bottom_y_px": 2.3391454319453078,
+        "mae_width_px": 3.179587942821628,
+        "mae_height_px": 2.114438160348042
+      }
+    },
+    "25.0": {
+      "min_depth_m": 25.0,
+      "cases_total": 8,
+      "cases_with_bbox_samples": 6,
+      "cases_without_bbox_samples": 2,
+      "case_ids_without_bbox_samples": [
+        "geometry_cutin_smoke_v1_case_0001",
+        "geometry_cutin_smoke_v1_case_0002"
+      ],
+      "bbox_frames": 1314,
+      "macro_metrics": {
+        "presence_agreement": {
+          "mean": 1.0,
+          "min": 1.0,
+          "max": 1.0
+        },
+        "visibility_agreement": {
+          "mean": 1.0,
+          "min": 1.0,
+          "max": 1.0
+        },
+        "mae_cx_px": {
+          "mean": 1.4965,
+          "min": 0.625,
+          "max": 2.03
+        },
+        "mae_bottom_y_px": {
+          "mean": 2.053166666666667,
+          "min": 1.326,
+          "max": 2.566
+        },
+        "mae_width_px": {
+          "mean": 2.8306666666666667,
+          "min": 1.707,
+          "max": 3.688
+        },
+        "mae_height_px": {
+          "mean": 1.8491666666666666,
+          "min": 1.181,
+          "max": 2.321
+        },
+        "signed_mean_cx_px": {
+          "mean": 0.741,
+          "min": -0.399,
+          "max": 1.409
+        },
+        "signed_mean_bottom_y_px": {
+          "mean": 2.053166666666667,
+          "min": 1.326,
+          "max": 2.566
+        },
+        "signed_mean_width_px": {
+          "mean": 2.8306666666666667,
+          "min": 1.707,
+          "max": 3.688
+        },
+        "signed_mean_height_px": {
+          "mean": 1.8491666666666666,
+          "min": 1.181,
+          "max": 2.321
+        }
+      },
+      "frame_weighted_mae": {
+        "mae_cx_px": 1.5297762557077623,
+        "mae_bottom_y_px": 2.01226103500761,
+        "mae_width_px": 2.7642146118721462,
+        "mae_height_px": 1.8115471841704718
+      }
+    },
+    "30.0": {
+      "min_depth_m": 30.0,
+      "cases_total": 8,
+      "cases_with_bbox_samples": 6,
+      "cases_without_bbox_samples": 2,
+      "case_ids_without_bbox_samples": [
+        "geometry_cutin_smoke_v1_case_0001",
+        "geometry_cutin_smoke_v1_case_0002"
+      ],
+      "bbox_frames": 694,
+      "macro_metrics": {
+        "presence_agreement": {
+          "mean": 1.0,
+          "min": 1.0,
+          "max": 1.0
+        },
+        "visibility_agreement": {
+          "mean": 1.0,
+          "min": 1.0,
+          "max": 1.0
+        },
+        "mae_cx_px": {
+          "mean": 2.286166666666667,
+          "min": 0.0,
+          "max": 5.364
+        },
+        "mae_bottom_y_px": {
+          "mean": 1.7211666666666665,
+          "min": 1.326,
+          "max": 2.03
+        },
+        "mae_width_px": {
+          "mean": 2.2586666666666666,
+          "min": 1.707,
+          "max": 2.59
+        },
+        "mae_height_px": {
+          "mean": 1.5423333333333333,
+          "min": 1.181,
+          "max": 1.824
+        },
+        "signed_mean_cx_px": {
+          "mean": 1.6795,
+          "min": 0.0,
+          "max": 4.215
+        },
+        "signed_mean_bottom_y_px": {
+          "mean": 1.7211666666666665,
+          "min": 1.326,
+          "max": 2.03
+        },
+        "signed_mean_width_px": {
+          "mean": 2.2586666666666666,
+          "min": 1.707,
+          "max": 2.59
+        },
+        "signed_mean_height_px": {
+          "mean": 1.5423333333333333,
+          "min": 1.181,
+          "max": 1.824
+        }
+      },
+      "frame_weighted_mae": {
+        "mae_cx_px": 2.382014409221902,
+        "mae_bottom_y_px": 1.4959971181556195,
+        "mae_width_px": 1.9684279538904899,
+        "mae_height_px": 1.3364711815561958
+      }
+    }
+  }
+}

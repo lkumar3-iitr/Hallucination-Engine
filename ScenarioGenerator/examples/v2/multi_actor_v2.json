@@ -1,0 +1,134 @@
+{
+  "schema_version": "2.0",
+
+  "scenario_id": "v2_multi_actor_001",
+
+  "description": "Three independently scripted vehicles.",
+
+  "duration_s": 8.0,
+  "fps": 30,
+  "seed": 1,
+
+  "ego": {
+    "actor_id": "ego",
+
+    "spawn": {
+      "x_m": 0.0,
+      "y_m": 0.0,
+      "yaw_deg": 0.0
+    },
+
+    "motion": {
+      "mode": "maneuver",
+      "maneuver": "straight",
+      "speed_mps": 5.0,
+      "start_time_s": 0.0
+    }
+  },
+
+  "actors": [
+    {
+      "actor_id": "adv_following",
+
+      "actor_type": "vehicle",
+      "role": "traffic",
+      "asset_key": "sedan.generic",
+
+      "spawn": {
+        "x_m": 25.0,
+        "y_m": 0.0,
+        "yaw_deg": 0.0
+      },
+
+      "motion": {
+        "mode": "maneuver",
+        "maneuver": "straight",
+        "speed_mps": 6.0,
+        "start_time_s": 0.0
+      }
+    },
+
+    {
+      "actor_id": "adv_cutin",
+
+      "actor_type": "vehicle",
+      "role": "adversary",
+      "asset_key": "sedan.generic",
+
+      "spawn": {
+        "x_m": 35.0,
+        "y_m": 3.5,
+        "yaw_deg": 0.0
+      },
+
+      "motion": {
+        "mode": "path",
+
+        "target_speed_mps": 5.0,
+
+        "interpolation": "smooth",
+
+        "waypoints": [
+          {
+            "x_m": 40.0,
+            "y_m": 3.5
+          },
+          {
+            "x_m": 48.0,
+            "y_m": 0.0
+          },
+          {
+            "x_m": 60.0,
+            "y_m": 0.0
+          }
+        ]
+      }
+    },
+
+    {
+      "actor_id": "adv_crossing",
+
+      "actor_type": "vehicle",
+      "role": "adversary",
+      "asset_key": "sedan.generic",
+
+      "spawn": {
+        "x_m": 45.0,
+        "y_m": 8.0,
+        "yaw_deg": -90.0
+      },
+
+      "lifecycle": {
+        "spawn_time_s": 2.0,
+        "despawn_time_s": 7.0
+      },
+
+      "motion": {
+        "mode": "keyframes",
+
+        "interpolation": "linear",
+
+        "keyframes": [
+          {
+            "t_s": 2.0,
+            "x_m": 45.0,
+            "y_m": 8.0,
+            "yaw_deg": -90.0
+          },
+          {
+            "t_s": 4.0,
+            "x_m": 45.0,
+            "y_m": 0.0,
+            "yaw_deg": -90.0
+          },
+          {
+            "t_s": 6.0,
+            "x_m": 45.0,
+            "y_m": -8.0,
+            "yaw_deg": -90.0
+          }
+        ]
+      }
+    }
+  ]
+}

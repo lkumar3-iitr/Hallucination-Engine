@@ -1,0 +1,30 @@
+{
+  "schema_version": "benchmark-1.0",
+
+  "benchmark_id": "geometry_oncoming_pass_smoke_v1",
+
+  "description": "Oncoming vehicle approaches in the adjacent opposing lane, passes the ego camera, and continues physically behind it.",
+
+  "scenario_type": "oncoming",
+
+  "base": {
+    "side": null,
+
+    "start_distance_m": 60.0,
+
+    "lane_y_m": -3.5,
+    "target_lane_y_m": 0.0,
+    "lane_width_m": 3.5,
+
+    "actor_speed_mps": 5.0,
+    "ego_speed_mps": 5.0,
+
+    "duration_s": 8.0,
+    "fps": 30,
+
+    "cut_start_s": 1.5,
+    "cut_duration_s": 2.0
+  },
+
+  "factors": {}
+}

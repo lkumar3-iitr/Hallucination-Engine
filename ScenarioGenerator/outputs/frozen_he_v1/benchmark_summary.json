@@ -1,0 +1,86 @@
+{
+  "benchmark_id": "geometry_cutin_smoke_v1",
+  "cases_expected": 8,
+  "cases_aggregated": 8,
+  "aggregation_errors": 0,
+  "execution_passed": 8,
+  "all_execution_passed": true,
+  "total_culled_frames": 0,
+  "total_out_of_domain_frames": 0,
+  "total_bbox_evaluation_frames": 1888,
+  "descriptive_statistics": {
+    "presence_agreement": {
+      "mean": 1.0,
+      "min": 1.0,
+      "max": 1.0
+    },
+    "visibility_agreement": {
+      "mean": 1.0,
+      "min": 1.0,
+      "max": 1.0
+    },
+    "mae_cx_px": {
+      "mean": 2.063,
+      "min": 1.586,
+      "max": 2.797
+    },
+    "mae_bottom_y_px": {
+      "mean": 3.157375,
+      "min": 1.326,
+      "max": 6.292
+    },
+    "mae_width_px": {
+      "mean": 4.26075,
+      "min": 1.707,
+      "max": 8.576
+    },
+    "mae_height_px": {
+      "mean": 2.880875,
+      "min": 1.181,
+      "max": 5.811
+    },
+    "signed_mean_cx_px": {
+      "mean": 1.150625,
+      "min": 0.732,
+      "max": 1.251
+    },
+    "signed_mean_bottom_y_px": {
+      "mean": 3.157375,
+      "min": 1.326,
+      "max": 6.292
+    },
+    "signed_mean_width_px": {
+      "mean": 4.26075,
+      "min": 1.707,
+      "max": 8.576
+    },
+    "signed_mean_height_px": {
+      "mean": 2.880875,
+      "min": 1.181,
+      "max": 5.811
+    }
+  },
+  "worst_cases": {
+    "mae_cx_px": {
+      "case_id": "geometry_cutin_smoke_v1_case_0002",
+      "value": 2.797
+    },
+    "mae_bottom_y_px": {
+      "case_id": "geometry_cutin_smoke_v1_case_0001",
+      "value": 6.292
+    },
+    "mae_width_px": {
+      "case_id": "geometry_cutin_smoke_v1_case_0001",
+      "value": 8.576
+    },
+    "mae_height_px": {
+      "case_id": "geometry_cutin_smoke_v1_case_0001",
+      "value": 5.811
+    }
+  },
+  "geometry_acceptance": {
+    "status": "NOT_DEFINED",
+    "note": "M4E reports measurements only. No geometric equivalence threshold has been imposed."
+  },
+  "errors": []
+}

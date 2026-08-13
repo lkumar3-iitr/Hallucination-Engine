@@ -1,0 +1,93 @@
+{
+  "controlled_cutin_benchmark": {
+    "type": "quantitative_benchmark",
+    "case_count": 8,
+    "cases": [
+      {
+        "case_id": "geometry_cutin_smoke_v1_case_0001",
+        "real_ground_truth_exists": true,
+        "real_ground_truth": "HE_v_0.1\\recordings\\he_pairs\\geometry_cutin_smoke_v1_case_0001\\real_ground_truth_v2.jsonl",
+        "he_metadata_exists": true,
+        "he_metadata": "HE_v_0.1\\he_outputs\\geometry_cutin_smoke_v1_case_0001_he\\metadata.json"
+      },
+      {
+        "case_id": "geometry_cutin_smoke_v1_case_0002",
+        "real_ground_truth_exists": true,
+        "real_ground_truth": "HE_v_0.1\\recordings\\he_pairs\\geometry_cutin_smoke_v1_case_0002\\real_ground_truth_v2.jsonl",
+        "he_metadata_exists": true,
+        "he_metadata": "HE_v_0.1\\he_outputs\\geometry_cutin_smoke_v1_case_0002_he\\metadata.json"
+      },
+      {
+        "case_id": "geometry_cutin_smoke_v1_case_0003",
+        "real_ground_truth_exists": true,
+        "real_ground_truth": "HE_v_0.1\\recordings\\he_pairs\\geometry_cutin_smoke_v1_case_0003\\real_ground_truth_v2.jsonl",
+        "he_metadata_exists": true,
+        "he_metadata": "HE_v_0.1\\he_outputs\\geometry_cutin_smoke_v1_case_0003_he\\metadata.json"
+      },
+      {
+        "case_id": "geometry_cutin_smoke_v1_case_0004",
+        "real_ground_truth_exists": true,
+        "real_ground_truth": "HE_v_0.1\\recordings\\he_pairs\\geometry_cutin_smoke_v1_case_0004\\real_ground_truth_v2.jsonl",
+        "he_metadata_exists": true,
+        "he_metadata": "HE_v_0.1\\he_outputs\\geometry_cutin_smoke_v1_case_0004_he\\metadata.json"
+      },
+      {
+        "case_id": "geometry_cutin_smoke_v1_case_0005",
+        "real_ground_truth_exists": true,
+        "real_ground_truth": "HE_v_0.1\\recordings\\he_pairs\\geometry_cutin_smoke_v1_case_0005\\real_ground_truth_v2.jsonl",
+        "he_metadata_exists": true,
+        "he_metadata": "HE_v_0.1\\he_outputs\\geometry_cutin_smoke_v1_case_0005_he\\metadata.json"
+      },
+      {
+        "case_id": "geometry_cutin_smoke_v1_case_0006",
+        "real_ground_truth_exists": true,
+        "real_ground_truth": "HE_v_0.1\\recordings\\he_pairs\\geometry_cutin_smoke_v1_case_0006\\real_ground_truth_v2.jsonl",
+        "he_metadata_exists": true,
+        "he_metadata": "HE_v_0.1\\he_outputs\\geometry_cutin_smoke_v1_case_0006_he\\metadata.json"
+      },
+      {
+        "case_id": "geometry_cutin_smoke_v1_case_0007",
+        "real_ground_truth_exists": true,
+        "real_ground_truth": "HE_v_0.1\\recordings\\he_pairs\\geometry_cutin_smoke_v1_case_0007\\real_ground_truth_v2.jsonl",
+        "he_metadata_exists": true,
+        "he_metadata": "HE_v_0.1\\he_outputs\\geometry_cutin_smoke_v1_case_0007_he\\metadata.json"
+      },
+      {
+        "case_id": "geometry_cutin_smoke_v1_case_0008",
+        "real_ground_truth_exists": true,
+        "real_ground_truth": "HE_v_0.1\\recordings\\he_pairs\\geometry_cutin_smoke_v1_case_0008\\real_ground_truth_v2.jsonl",
+        "he_metadata_exists": true,
+        "he_metadata": "HE_v_0.1\\he_outputs\\geometry_cutin_smoke_v1_case_0008_he\\metadata.json"
+      }
+    ]
+  },
+  "oncoming": {
+    "type": "standardized_v2_validation",
+    "case_id": "geometry_oncoming_pass_smoke_v1_case_0001",
+    "real_ground_truth_exists": true,
+    "real_ground_truth": "HE_v_0.1\\recordings\\he_pairs\\geometry_oncoming_pass_smoke_v1_case_0001\\real_ground_truth_v2.jsonl",
+    "he_metadata_exists": true,
+    "he_metadata": "HE_v_0.1\\he_outputs\\geometry_oncoming_pass_smoke_v1_case_0001_he\\metadata.json"
+  },
+  "multi_actor": {
+    "type": "multi_actor_validation",
+    "case_id": "v2_multi_actor_001",
+    "real_ground_truth_exists": true,
+    "real_ground_truth": "HE_v_0.1\\recordings\\he_pairs\\v2_multi_actor_001\\real_ground_truth_v2.jsonl",
+    "he_metadata_exists": true,
+    "he_metadata": "HE_v_0.1\\he_outputs\\v2_multi_actor_001_he\\metadata.json"
+  },
+  "legacy_engineering_validation": {
+    "included_in_quantitative_summary": false,
+    "reason": "Earlier development scenarios used different pipeline revisions. They remain engineering validation evidence but are not mixed with the frozen standardized M4 protocol.",
+    "scenario_families": [
+      "static",
+      "following/receding",
+      "crossing left-to-right",
+      "crossing right-to-left",
+      "ego turning",
+      "earlier cut-in",
+      "earlier oncoming"
+    ]
+  }
+}
