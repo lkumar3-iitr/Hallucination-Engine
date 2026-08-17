@@ -864,6 +864,11 @@ def project_vehicle_box_with_placement_model(
       1. New NPZ lookup adapter: predict_box(...)
       2. Old v2 lookup adapter: predict(...)
       3. Old v1 MLP adapter: predict_from_adversary_state(...)
+
+    HEPlacement V2.1:
+      - NPZ lookup provides bottom_y, width, height and visibility.
+      - Horizontal center is computed analytically from camera intrinsics.
+      - This avoids lateral clamping outside the lookup table rel_x range.
     """
 
     rel_x = float(state["x_m"])
@@ -874,38 +879,156 @@ def project_vehicle_box_with_placement_model(
     # New NPZ lookup adapter
     # ------------------------------------------------------------
     if hasattr(placement_adapter, "predict_box"):
+
         box = placement_adapter.predict_box(
             state=state,
             image_width=image_width,
             image_height=image_height,
         )
 
-        if not hasattr(project_vehicle_box_with_placement_model, "_debug_count"):
+        # ============================================================
+        # HEPlacement V2.1
+        #
+        # Use analytic pinhole projection for horizontal center:
+        #
+        #     u = cx + fx * X / Z
+        #
+        # Preserve lookup-derived:
+        #   - bottom_y
+        #   - box width
+        #   - box height
+        #   - visibility
+        #
+        # This prevents lateral clamping when rel_x lies outside the
+        # lookup table's supported lateral range.
+        # ============================================================
+
+        box = dict(box)
+
+        camera_cfg = (
+            scenario.get("camera", {})
+            if scenario is not None
+            else {}
+        )
+
+        intrinsics = camera_cfg.get(
+            "intrinsics",
+            {}
+        )
+
+        fx = float(
+            intrinsics.get(
+                "fx",
+                image_width / 2.0,
+            )
+        )
+
+        camera_cx = float(
+            intrinsics.get(
+                "cx",
+                image_width / 2.0,
+            )
+        )
+
+        if rel_z > 1e-6:
+
+            analytic_cx = (
+                camera_cx
+                + fx * (rel_x / rel_z)
+            )
+
+            box_width = float(
+                box["box_width"]
+            )
+
+            box["cx"] = float(
+                analytic_cx
+            )
+
+            box["x1"] = float(
+                analytic_cx
+                - box_width / 2.0
+            )
+
+            box["x2"] = float(
+                analytic_cx
+                + box_width / 2.0
+            )
+
+            box["source"] = (
+                "heplacement_v2_npz_lookup_analytic_cx"
+            )
+
+        # ------------------------------------------------------------
+        # Debug output
+        # ------------------------------------------------------------
+
+        if not hasattr(
+            project_vehicle_box_with_placement_model,
+            "_debug_count"
+        ):
             project_vehicle_box_with_placement_model._debug_count = 0
 
-        if project_vehicle_box_with_placement_model._debug_count < 20:
-            print("[HEPlacement RAW: heplacement_v2_npz_lookup]")
-            print("  input:", {
-                "rel_x": rel_x,
-                "rel_z": rel_z,
-                "rel_yaw": rel_yaw,
-            })
-            print("  box:", box)
+        if (
+            project_vehicle_box_with_placement_model._debug_count
+            < 20
+        ):
+            print(
+                "[HEPlacement RAW: heplacement_v2_npz_lookup]"
+            )
+
+            print(
+                "  input:",
+                {
+                    "rel_x": rel_x,
+                    "rel_z": rel_z,
+                    "rel_yaw": rel_yaw,
+                }
+            )
+
+            print(
+                "  box:",
+                box
+            )
+
             project_vehicle_box_with_placement_model._debug_count += 1
 
-        # The new NPZ adapter already returns the compositor's box format:
-        # visible, cx, bottom_y, x1, y1, x2, y2, box_width, box_height.
+        # NPZ adapter already returns compositor box format.
         return box
 
     # ------------------------------------------------------------
-    # Old placement adapters
+    # Legacy placement adapters
     # ------------------------------------------------------------
-    placement_cfg = scenario.get("placement_model", {}) if scenario is not None else {}
-    model_type = placement_cfg.get("type", "heplacement_v1_mlp")
+
+    placement_cfg = (
+        scenario.get(
+            "placement_model",
+            {}
+        )
+        if scenario is not None
+        else {}
+    )
+
+    model_type = placement_cfg.get(
+        "type",
+        "heplacement_v1_mlp"
+    )
+
+    # ------------------------------------------------------------
+    # Old V2 lookup adapter
+    # ------------------------------------------------------------
 
     if model_type == "heplacement_v2_lookup":
-        method = placement_cfg.get("method", "interpolated")
-        mode = placement_cfg.get("mode", "clamp")
+
+        method = placement_cfg.get(
+            "method",
+            "interpolated"
+        )
+
+        mode = placement_cfg.get(
+            "mode",
+            "clamp"
+        )
 
         rect = placement_adapter.predict(
             rel_x=rel_x,
@@ -915,17 +1038,32 @@ def project_vehicle_box_with_placement_model(
             mode=mode,
         )
 
+    # ------------------------------------------------------------
+    # Old V1 MLP adapter
+    # ------------------------------------------------------------
+
     elif model_type == "heplacement_v1_mlp":
-        rect = placement_adapter.predict_from_adversary_state({
-            "rel_x": rel_x,
-            "rel_z": rel_z,
-            "rel_yaw": rel_yaw,
-        })
+
+        rect = placement_adapter.predict_from_adversary_state(
+            {
+                "rel_x": rel_x,
+                "rel_z": rel_z,
+                "rel_yaw": rel_yaw,
+            }
+        )
 
     else:
-        raise ValueError(f"Unsupported placement model type: {model_type}")
+
+        raise ValueError(
+            f"Unsupported placement model type: {model_type}"
+        )
+
+    # ------------------------------------------------------------
+    # Optional legacy runtime correction
+    # ------------------------------------------------------------
 
     if scenario is not None:
+
         rect = apply_placement_runtime_correction(
             rect=rect,
             scenario=scenario,
@@ -933,30 +1071,73 @@ def project_vehicle_box_with_placement_model(
             image_height=image_height
         )
 
-    if not hasattr(project_vehicle_box_with_placement_model, "_debug_count"):
+    # ------------------------------------------------------------
+    # Debug output for legacy adapters
+    # ------------------------------------------------------------
+
+    if not hasattr(
+        project_vehicle_box_with_placement_model,
+        "_debug_count"
+    ):
         project_vehicle_box_with_placement_model._debug_count = 0
 
-    if project_vehicle_box_with_placement_model._debug_count < 20:
-        print(f"[HEPlacement RAW: {model_type}]")
-        print("  input:", {
-            "rel_x": rel_x,
-            "rel_z": rel_z,
-            "rel_yaw": rel_yaw,
-        })
-        print("  rect:", rect)
+    if (
+        project_vehicle_box_with_placement_model._debug_count
+        < 20
+    ):
+
+        print(
+            f"[HEPlacement RAW: {model_type}]"
+        )
+
+        print(
+            "  input:",
+            {
+                "rel_x": rel_x,
+                "rel_z": rel_z,
+                "rel_yaw": rel_yaw,
+            }
+        )
+
+        print(
+            "  rect:",
+            rect
+        )
+
         project_vehicle_box_with_placement_model._debug_count += 1
+
+    # ------------------------------------------------------------
+    # Convert legacy rectangle format to compositor box format
+    # ------------------------------------------------------------
 
     x = float(rect["x"])
     y = float(rect["y"])
+
     w = float(rect["w"])
     h = float(rect["h"])
-    center_x = float(rect["center_x"])
-    bottom_y = float(rect["bottom_y"])
-    visible = bool(rect["visible"])
-    visible_prob = float(rect.get("visible_prob", 1.0))
+
+    center_x = float(
+        rect["center_x"]
+    )
+
+    bottom_y = float(
+        rect["bottom_y"]
+    )
+
+    visible = bool(
+        rect["visible"]
+    )
+
+    visible_prob = float(
+        rect.get(
+            "visible_prob",
+            1.0
+        )
+    )
 
     x1 = x
     y1 = y
+
     x2 = x + w
     y2 = y + h
 
@@ -975,7 +1156,10 @@ def project_vehicle_box_with_placement_model(
         "box_width": w,
         "box_height": h,
 
-        "z_m": float(state["z_m"]),
+        "z_m": float(
+            state["z_m"]
+        ),
+
         "source": model_type
     }
 
@@ -1607,9 +1791,18 @@ def run_scenario(scenario, overwrite=False):
 
         full_mask_accum = np.zeros((frame_h, frame_w), dtype=np.uint8)
 
-        if start_frame <= frame_idx <= end_frame:
-            t_sec = get_frame_time(frame_idx, start_frame, scenario_fps)
+        # Synthetic actors that are ready to render on this frame.
+        # They are collected first, then composited far-to-near.
+        render_candidates = []
 
+        if start_frame <= frame_idx <= end_frame:
+
+            t_sec = get_frame_time(
+                frame_idx,
+                start_frame,
+                scenario_fps
+            )
+            
             for adv in adversaries:
                 if not adv.get("enabled", True):
                     continue
@@ -1763,7 +1956,9 @@ def run_scenario(scenario, overwrite=False):
                     frame_meta["adversaries"].append(adv_meta)
                     continue
 
-                sprite_rgba = sprite_cache.load_rgba(sprite_info["sprite_path"])
+                sprite_rgba = sprite_cache.load_rgba(
+                    sprite_info["sprite_path"]
+                )
 
                 # Resize sprite so its height matches the projected 2D box height.
                 sprite_resized = resize_sprite_to_box(
@@ -1774,73 +1969,252 @@ def run_scenario(scenario, overwrite=False):
                 spr_h, spr_w = sprite_resized.shape[:2]
 
                 # Anchor: bottom-center of sprite goes to projected bottom-center.
-                paste_x1 = int(round(box["cx"] - spr_w / 2.0))
-                paste_y1 = int(round(box["bottom_y"] - spr_h))
-
-                alpha = float(adv.get("rendering", {}).get("alpha", 1.0))
-
-                frame_rgb, obj_mask = alpha_composite_rgb(
-                    frame_rgb=frame_rgb,
-                    sprite_rgba=sprite_resized,
-                    x1=paste_x1,
-                    y1=paste_y1,
-                    global_alpha=alpha
+                paste_x1 = int(
+                    round(
+                        box["cx"]
+                        - spr_w / 2.0
+                    )
                 )
 
-                full_mask_accum = np.maximum(full_mask_accum, obj_mask)
-
-                debug_rgb = draw_debug_box(
-                    debug_rgb,
-                    box,
-                    selected_angle=sprite_info["selected_angle"]
+                paste_y1 = int(
+                    round(
+                        box["bottom_y"]
+                        - spr_h
+                    )
                 )
 
-                # Also draw actual sprite paste rect in debug.
-                cv2.rectangle(
-                    debug_rgb,
-                    (paste_x1, paste_y1),
-                    (paste_x1 + spr_w, paste_y1 + spr_h),
-                    (0, 255, 0),
-                    1
+                alpha = float(
+                    adv.get(
+                        "rendering",
+                        {}
+                    ).get(
+                        "alpha",
+                        1.0
+                    )
                 )
+
+                # ------------------------------------------------------------
+                # Do NOT composite immediately.
+                #
+                # Collect all visible synthetic actors first so that they can
+                # be depth sorted before rendering.
+                # ------------------------------------------------------------
 
                 adv_meta.update({
                     "relative_angle_deg": relative_angle,
-                    "angle_mode": adv.get("rendering", {}).get(
+
+                    "angle_mode": adv.get(
+                        "rendering",
+                        {}
+                    ).get(
                         "angle_mode",
                         "viewpoint"
                     ),
+
                     "sprite": sprite_info,
+
                     "paste": {
                         "x1": paste_x1,
                         "y1": paste_y1,
                         "x2": paste_x1 + spr_w,
                         "y2": paste_y1 + spr_h,
                         "sprite_width": spr_w,
-                        "sprite_height": spr_h
+                        "sprite_height": spr_h,
                     },
-                    "rendered": True
+
+                    "rendered": False,
                 })
+
                 adv_meta["debug_summary"] = {
                     "frame_idx": int(frame_idx),
-                    "raw_x_m": float(raw_state.get("x_m", 0.0)),
-                    "raw_z_m": float(raw_state.get("z_m", 0.0)),
-                    "cam_x_m": float(state.get("x_m", 0.0)),
-                    "cam_z_m": float(state.get("z_m", 0.0)),
-                    "cam_yaw_deg": float(state.get("yaw_deg", 0.0)),
 
-                    # Actual box keys used by current HE placement.
-                    "box_center_x": float(box.get("cx", -1.0)),
-                    "box_bottom_y": float(box.get("bottom_y", -1.0)),
-                    "box_width": float(box.get("box_width", -1.0)),
-                    "box_height": float(box.get("box_height", -1.0)),
+                    "raw_x_m": float(
+                        raw_state.get(
+                            "x_m",
+                            0.0
+                        )
+                    ),
 
-                    "visible": bool(box.get("visible", False)),
-                    "placement_source": box.get("source", "unknown"),
+                    "raw_z_m": float(
+                        raw_state.get(
+                            "z_m",
+                            0.0
+                        )
+                    ),
+
+                    "cam_x_m": float(
+                        state.get(
+                            "x_m",
+                            0.0
+                        )
+                    ),
+
+                    "cam_z_m": float(
+                        state.get(
+                            "z_m",
+                            0.0
+                        )
+                    ),
+
+                    "cam_yaw_deg": float(
+                        state.get(
+                            "yaw_deg",
+                            0.0
+                        )
+                    ),
+
+                    "box_center_x": float(
+                        box.get(
+                            "cx",
+                            -1.0
+                        )
+                    ),
+
+                    "box_bottom_y": float(
+                        box.get(
+                            "bottom_y",
+                            -1.0
+                        )
+                    ),
+
+                    "box_width": float(
+                        box.get(
+                            "box_width",
+                            -1.0
+                        )
+                    ),
+
+                    "box_height": float(
+                        box.get(
+                            "box_height",
+                            -1.0
+                        )
+                    ),
+
+                    "visible": bool(
+                        box.get(
+                            "visible",
+                            False
+                        )
+                    ),
+
+                    "placement_source": box.get(
+                        "source",
+                        "unknown"
+                    ),
                 }
 
-                frame_meta["adversaries"].append(adv_meta)
+                render_candidates.append({
+                    "id": adv["id"],
+                    "state": state,
+                    "box": box,
+                    "sprite_info": sprite_info,
+                    "sprite_resized": sprite_resized,
+                    "paste_x1": paste_x1,
+                    "paste_y1": paste_y1,
+                    "alpha": alpha,
+                    "adv_meta": adv_meta,
+                })
 
+                # Metadata order remains scenario/actor order.
+                frame_meta["adversaries"].append(
+                    adv_meta
+                )
+        # ============================================================
+        # Depth-sorted synthetic compositing
+        #
+        # Larger z = farther from camera.
+        # Render far actors first and near actors last.
+        # ============================================================
+
+        render_candidates.sort(
+            key=lambda item: float(
+                item["state"].get(
+                    "z_m",
+                    0.0
+                )
+            ),
+            reverse=True,
+        )
+
+        frame_meta["render_order"] = [
+            {
+                "id": item["id"],
+                "z_m": float(
+                    item["state"].get(
+                        "z_m",
+                        0.0
+                    )
+                ),
+            }
+            for item in render_candidates
+        ]
+
+        for render_index, item in enumerate(
+            render_candidates
+        ):
+            box = item["box"]
+            sprite_info = item["sprite_info"]
+            sprite_resized = item["sprite_resized"]
+
+            paste_x1 = item["paste_x1"]
+            paste_y1 = item["paste_y1"]
+            alpha = item["alpha"]
+
+            adv_meta = item["adv_meta"]
+
+            spr_h, spr_w = (
+                sprite_resized.shape[:2]
+            )
+
+            frame_rgb, obj_mask = (
+                alpha_composite_rgb(
+                    frame_rgb=frame_rgb,
+                    sprite_rgba=sprite_resized,
+                    x1=paste_x1,
+                    y1=paste_y1,
+                    global_alpha=alpha,
+                )
+            )
+
+            full_mask_accum = np.maximum(
+                full_mask_accum,
+                obj_mask,
+            )
+
+            debug_rgb = draw_debug_box(
+                debug_rgb,
+                box,
+                selected_angle=
+                    sprite_info["selected_angle"],
+            )
+
+            cv2.rectangle(
+                debug_rgb,
+                (
+                    paste_x1,
+                    paste_y1,
+                ),
+                (
+                    paste_x1 + spr_w,
+                    paste_y1 + spr_h,
+                ),
+                (0, 255, 0),
+                1,
+            )
+
+            adv_meta["rendered"] = True
+
+            adv_meta["render_order_index"] = int(
+                render_index
+            )
+
+            adv_meta["render_depth_m"] = float(
+                item["state"].get(
+                    "z_m",
+                    0.0
+                )
+            )
         metadata["frames"].append(frame_meta)
 
         out_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
