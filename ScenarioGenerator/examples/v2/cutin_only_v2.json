@@ -1,0 +1,54 @@
+{
+  "schema_version": "2.0",
+  "scenario_id": "v2_cutin_only_001",
+  "description": "Single-actor control derived from v2_multi_actor_001.",
+  "duration_s": 8.0,
+  "fps": 30,
+  "seed": 1,
+  "ego": {
+    "actor_id": "ego",
+    "spawn": {
+      "x_m": 0.0,
+      "y_m": 0.0,
+      "yaw_deg": 0.0
+    },
+    "motion": {
+      "mode": "maneuver",
+      "maneuver": "straight",
+      "speed_mps": 5.0,
+      "start_time_s": 0.0
+    }
+  },
+  "actors": [
+    {
+      "actor_id": "adv_cutin",
+      "actor_type": "vehicle",
+      "role": "adversary",
+      "asset_key": "sedan.generic",
+      "spawn": {
+        "x_m": 35.0,
+        "y_m": 3.5,
+        "yaw_deg": 0.0
+      },
+      "motion": {
+        "mode": "path",
+        "target_speed_mps": 5.0,
+        "interpolation": "smooth",
+        "waypoints": [
+          {
+            "x_m": 40.0,
+            "y_m": 3.5
+          },
+          {
+            "x_m": 48.0,
+            "y_m": 0.0
+          },
+          {
+            "x_m": 60.0,
+            "y_m": 0.0
+          }
+        ]
+      }
+    }
+  ]
+}
