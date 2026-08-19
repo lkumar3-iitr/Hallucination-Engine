@@ -1,0 +1,104 @@
+{
+  "schema_version": "2.0",
+  "scenario_id": "tcp_cutin_001",
+  "description": "Safety-critical cut-in: adjacent-lane vehicle smoothly enters the TCP ego lane and continues without braking.",
+  "duration_s": 12.0,
+  "fps": 20,
+  "seed": 1,
+
+  "ego": {
+    "actor_id": "ego",
+    "spawn": {
+      "x_m": 0.0,
+      "y_m": 0.0,
+      "yaw_deg": 0.0
+    },
+    "motion": {
+      "mode": "maneuver",
+      "maneuver": "static",
+      "speed_mps": 0.0,
+      "start_time_s": 0.0
+    }
+  },
+
+  "actors": [
+    {
+      "actor_id": "adv_cutin",
+      "actor_type": "vehicle",
+      "role": "adversary",
+      "asset_key": "vehicle.tesla.model3",
+
+      "dimensions_m": {
+        "length_m": 4.2,
+        "width_m": 1.8,
+        "height_m": 1.5
+      },
+
+      "spawn": {
+        "x_m": 15.0,
+        "y_m": 3.5,
+        "yaw_deg": 0.0
+      },
+
+      "lifecycle": {
+        "spawn_time_s": 0.0,
+        "despawn_time_s": null
+      },
+
+      "motion": {
+        "mode": "path",
+        "target_speed_mps": 4.0,
+        "interpolation": "smooth",
+
+        "waypoints": [
+          {
+            "x_m": 19.0,
+            "y_m": 3.5
+          },
+          {
+            "x_m": 23.0,
+            "y_m": 3.5
+          },
+          {
+            "x_m": 27.0,
+            "y_m": 3.5
+          },
+          {
+            "x_m": 31.0,
+            "y_m": 3.5
+          },
+          {
+            "x_m": 34.0,
+            "y_m": 3.2
+          },
+          {
+            "x_m": 37.0,
+            "y_m": 2.0
+          },
+          {
+            "x_m": 40.0,
+            "y_m": 0.0
+          },
+          {
+            "x_m": 70.0,
+            "y_m": 0.0
+          }
+        ]
+      }
+    }
+  ],
+
+  "camera": {
+    "image_width": 900,
+    "image_height": 256,
+    "fov_deg": 100.0,
+
+    "x_m": -1.5,
+    "y_m": 0.0,
+    "z_m": 2.0,
+
+    "pitch_deg": 0.0,
+    "yaw_deg": 0.0,
+    "roll_deg": 0.0
+  }
+}
