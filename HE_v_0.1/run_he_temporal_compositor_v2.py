@@ -2147,14 +2147,29 @@ def get_visible_alpha_bbox(
 
 def resize_view_matrix_sprite_to_box(
     sprite_rgba,
+    target_box_w,
     target_box_h,
     anchor_x,
     anchor_y,
     alpha_threshold=10,
 ):
     """
-    Resize a view-matrix sprite so that its VISIBLE alpha height
-    matches the projected HE box height.
+    Resize a view-matrix sprite so that its VISIBLE alpha bounding box
+    matches the HEPlacement target box width and height.
+
+    Important separation of responsibilities:
+
+        View matrix:
+            selects appearance using
+            (angle, distance, elevation)
+
+        HEPlacement:
+            determines final image-space geometry
+            (cx, bottom_y, width, height)
+
+    Therefore the selected sprite is allowed to use separate horizontal
+    and vertical scaling. This prevents discrete distance/elevation sprite
+    switches from causing artificial changes in rendered object width.
 
     Returns:
         resized_sprite_rgba
@@ -2166,55 +2181,137 @@ def resize_view_matrix_sprite_to_box(
         alpha_threshold=alpha_threshold,
     )
 
+    visible_w = max(
+        1,
+        int(visible_bbox["width"]),
+    )
+
     visible_h = max(
         1,
-        int(visible_bbox["height"])
+        int(visible_bbox["height"]),
+    )
+
+    target_w = max(
+        1,
+        float(target_box_w),
     )
 
     target_h = max(
         1,
-        int(round(target_box_h))
+        float(target_box_h),
     )
 
-    scale = target_h / float(visible_h)
+    # ------------------------------------------------------------
+    # Independent geometry scales
+    # ------------------------------------------------------------
 
-    src_h, src_w = sprite_rgba.shape[:2]
+    scale_x = (
+        target_w
+        / float(visible_w)
+    )
+
+    scale_y = (
+        target_h
+        / float(visible_h)
+    )
+
+    src_h, src_w = (
+        sprite_rgba.shape[:2]
+    )
 
     resized_w = max(
         1,
-        int(round(src_w * scale))
+        int(
+            round(
+                src_w
+                * scale_x
+            )
+        ),
     )
 
     resized_h = max(
         1,
-        int(round(src_h * scale))
+        int(
+            round(
+                src_h
+                * scale_y
+            )
+        ),
     )
 
-    interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+    # If either axis enlarges the source, use linear interpolation.
+    # Otherwise area interpolation is preferred for downsampling.
+    if (
+        scale_x < 1.0
+        and
+        scale_y < 1.0
+    ):
+        interp = cv2.INTER_AREA
+    else:
+        interp = cv2.INTER_LINEAR
 
     resized = cv2.resize(
         sprite_rgba,
-        (resized_w, resized_h),
+        (
+            resized_w,
+            resized_h,
+        ),
         interpolation=interp,
     )
 
     resize_info = {
-        "scale": float(scale),
+        "scale_x":
+            float(scale_x),
 
-        "source_width": int(src_w),
-        "source_height": int(src_h),
+        "scale_y":
+            float(scale_y),
 
-        "visible_bbox": visible_bbox,
-        "visible_height": int(visible_h),
+        # Retained for easier backwards inspection.
+        # This is no longer the actual complete transform because
+        # horizontal and vertical scaling are independent.
+        "scale":
+            float(scale_y),
 
-        "resized_width": int(resized_w),
-        "resized_height": int(resized_h),
+        "source_width":
+            int(src_w),
 
-        "scaled_anchor_x": float(anchor_x) * scale,
-        "scaled_anchor_y": float(anchor_y) * scale,
+        "source_height":
+            int(src_h),
+
+        "visible_bbox":
+            visible_bbox,
+
+        "visible_width":
+            int(visible_w),
+
+        "visible_height":
+            int(visible_h),
+
+        "target_visible_width":
+            float(target_w),
+
+        "target_visible_height":
+            float(target_h),
+
+        "resized_width":
+            int(resized_w),
+
+        "resized_height":
+            int(resized_h),
+
+        "scaled_anchor_x":
+            float(anchor_x)
+            * float(scale_x),
+
+        "scaled_anchor_y":
+            float(anchor_y)
+            * float(scale_y),
     }
 
-    return resized, resize_info
+    return (
+        resized,
+        resize_info,
+    )
 
 # ============================================================
 # Compositor
@@ -2687,6 +2784,7 @@ def run_scenario(scenario, overwrite=False):
 
                     sprite_resized, resize_info = resize_view_matrix_sprite_to_box(
                         sprite_rgba=sprite_rgba,
+                        target_box_w=box["box_width"],
                         target_box_h=box["box_height"],
                         anchor_x=sprite_info["anchor_x"],
                         anchor_y=sprite_info["anchor_y"],
