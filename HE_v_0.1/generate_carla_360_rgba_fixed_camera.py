@@ -739,7 +739,41 @@ def expand_bbox(bbox, image_width, image_height, expand_ratio, extra_margin_px):
 
     return [x1e, y1e, x2e, y2e]
 
+def get_visible_mask_bbox(mask_u8):
+    """
+    Return the tight visible bounding box of a binary/alpha mask.
 
+    Returns:
+        (x1, y1, x2, y2)
+
+    or None if the mask contains no visible pixels.
+    """
+
+    ys, xs = np.where(
+        mask_u8 > 0
+    )
+
+    if (
+        len(xs) == 0
+        or
+        len(ys) == 0
+    ):
+        return None
+
+    return (
+        int(
+            xs.min()
+        ),
+        int(
+            ys.min()
+        ),
+        int(
+            xs.max()
+        ),
+        int(
+            ys.max()
+        ),
+    )
 def keep_largest_component(mask_u8):
     binary = (mask_u8 > 0).astype(np.uint8)
 
@@ -866,6 +900,456 @@ def keep_largest_components_by_area(mask_u8, min_area=80, max_components=12):
 
     return out
 
+def keep_components_touching_seed(
+    candidate_mask,
+    seed_mask,
+):
+    """
+    Keep candidate connected components that touch the trusted
+    semantic actor mask.
+
+    This rejects most background-difference noise while allowing
+    RGB-derived glass/roof/mirror regions to join the actor.
+    """
+
+    candidate = (
+        candidate_mask > 0
+    ).astype(
+        np.uint8
+    )
+
+    seed = (
+        seed_mask > 0
+    )
+
+    (
+        num_labels,
+        labels,
+        _,
+        _,
+    ) = cv2.connectedComponentsWithStats(
+        candidate,
+        connectivity=8,
+    )
+
+    if num_labels <= 1:
+        return (
+            candidate
+            *
+            255
+        ).astype(
+            np.uint8
+        )
+
+    touching_labels = np.unique(
+        labels[
+            seed
+        ]
+    )
+
+    touching_labels = {
+        int(label)
+        for label in touching_labels
+        if int(label) != 0
+    }
+
+    out = np.zeros_like(
+        candidate_mask,
+        dtype=np.uint8,
+    )
+
+    for label in touching_labels:
+
+        out[
+            labels == label
+        ] = 255
+
+    return out
+
+
+def make_alpha_from_semantic_and_background(
+    rgb,
+    background_rgb,
+    tags,
+    bbox,
+    args,
+):
+    """
+    Hybrid actor alpha extraction.
+
+    Trusted source:
+        CARLA semantic vehicle mask.
+
+    Recovery source:
+        RGB difference between actor-present and clean-background
+        frames, but ONLY in the upper vehicle region where glass,
+        roof and pillars are commonly missed.
+
+    Important:
+        RGB recovery is hard-clipped to the projected 3-D actor
+        bounding box so vehicle shadows cannot become part of
+        the sprite.
+    """
+
+    image_h, image_w = rgb.shape[:2]
+
+    # ========================================================
+    # Exact projected actor ROI
+    # ========================================================
+
+    bx1, by1, bx2, by2 = [
+        int(v)
+        for v in bbox
+    ]
+
+    # Tiny safety margin only.
+    pad = max(
+        2,
+        int(
+            round(
+                min(
+                    bx2 - bx1 + 1,
+                    by2 - by1 + 1,
+                )
+                * 0.01
+            )
+        ),
+    )
+
+    rx1 = max(
+        0,
+        bx1 - pad,
+    )
+
+    ry1 = max(
+        0,
+        by1 - pad,
+    )
+
+    rx2 = min(
+        image_w - 1,
+        bx2 + pad,
+    )
+
+    ry2 = min(
+        image_h - 1,
+        by2 + pad,
+    )
+
+    actor_roi = np.zeros(
+        (
+            image_h,
+            image_w,
+        ),
+        dtype=np.uint8,
+    )
+
+    actor_roi[
+        ry1:
+        ry2 + 1,
+        rx1:
+        rx2 + 1,
+    ] = 255
+
+    # ========================================================
+    # Trusted semantic body
+    # ========================================================
+
+    semantic_body = np.zeros(
+        (
+            image_h,
+            image_w,
+        ),
+        dtype=np.uint8,
+    )
+
+    roi_tags = tags[
+        ry1:
+        ry2 + 1,
+        rx1:
+        rx2 + 1,
+    ]
+
+    semantic_body[
+        ry1:
+        ry2 + 1,
+        rx1:
+        rx2 + 1,
+    ] = (
+        roi_tags
+        ==
+        int(
+            args.vehicle_semantic_tag
+        )
+    ).astype(
+        np.uint8
+    ) * 255
+
+    semantic_body = clean_body_mask(
+        semantic_body
+    )
+
+    semantic_bbox = get_visible_mask_bbox(
+        semantic_body
+    )
+
+    if semantic_bbox is None:
+
+        alpha = make_grabcut_alpha_from_bbox(
+            rgb=rgb,
+            bbox=bbox,
+            args=args,
+        )
+
+        return (
+            alpha,
+            alpha.copy(),
+            np.zeros_like(
+                alpha
+            ),
+        )
+
+    sx1, sy1, sx2, sy2 = semantic_bbox
+
+    semantic_height = max(
+        1,
+        sy2 - sy1 + 1,
+    )
+
+    # ========================================================
+    # RGB change mask
+    # ========================================================
+
+    diff = np.abs(
+        rgb.astype(
+            np.int16
+        )
+        -
+        background_rgb.astype(
+            np.int16
+        )
+    )
+
+    # Require meaningful RGB difference.
+    diff_strength = np.max(
+        diff,
+        axis=2,
+    )
+
+    diff_threshold = int(
+        getattr(
+            args,
+            "rgb_diff_threshold",
+            12,
+        )
+    )
+
+    diff_mask = (
+        diff_strength
+        >=
+        diff_threshold
+    ).astype(
+        np.uint8
+    ) * 255
+
+    # HARD actor-bbox clipping.
+    #
+    # This is the key shadow fix.
+    diff_mask = cv2.bitwise_and(
+        diff_mask,
+        actor_roi,
+    )
+
+    # ========================================================
+    # Recover ONLY upper-body regions
+    # ========================================================
+
+    upper_fraction = float(
+        getattr(
+            args,
+            "rgb_recovery_upper_fraction",
+            0.72,
+        )
+    )
+
+    upper_bottom = int(
+        round(
+            sy1
+            +
+            semantic_height
+            *
+            upper_fraction
+        )
+    )
+
+    upper_bottom = max(
+        sy1,
+        min(
+            sy2,
+            upper_bottom,
+        ),
+    )
+
+    upper_region = np.zeros(
+        (
+            image_h,
+            image_w,
+        ),
+        dtype=np.uint8,
+    )
+
+    upper_region[
+        max(
+            ry1,
+            sy1 - pad
+        ):
+        min(
+            ry2,
+            upper_bottom
+        )
+        + 1,
+
+        rx1:
+        rx2 + 1,
+    ] = 255
+
+    rgb_recovery = cv2.bitwise_and(
+        diff_mask,
+        upper_region,
+    )
+
+    # ========================================================
+    # Join semantic + recovered upper body
+    # ========================================================
+
+    candidate = cv2.bitwise_or(
+        semantic_body,
+        rgb_recovery,
+    )
+
+    # Small closing only to bridge 1–2 px gaps.
+    bridge_kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        (
+            3,
+            3,
+        ),
+    )
+
+    candidate = cv2.morphologyEx(
+        candidate,
+        cv2.MORPH_CLOSE,
+        bridge_kernel,
+        iterations=1,
+    )
+
+    candidate = keep_components_touching_seed(
+        candidate,
+        semantic_body,
+    )
+
+    # ========================================================
+    # Final alpha
+    #
+    # IMPORTANT:
+    # Do NOT globally fill every enclosed hole.
+    #
+    # A global fill can incorrectly include:
+    #   - road between the wheels
+    #   - underbody gaps
+    #   - wheel-arch background
+    #
+    # We only retain newly-filled holes in the upper body,
+    # where windshield / windows / panoramic roof occur.
+    # ========================================================
+
+    globally_filled = fill_holes(
+        candidate
+    )
+
+    newly_filled = cv2.subtract(
+        globally_filled,
+        candidate,
+    )
+
+    upper_hole_fill = cv2.bitwise_and(
+        newly_filled,
+        upper_region,
+    )
+
+    final_filled = cv2.bitwise_or(
+        candidate,
+        upper_hole_fill,
+    )
+
+    final_filled = cv2.bitwise_and(
+        final_filled,
+        actor_roi,
+    )
+
+    alpha = feather_alpha(
+        final_filled
+    )
+
+    # ========================================================
+    # Window mask
+    #
+    # IMPORTANT:
+    # Derive windows ONLY from semantic enclosed holes.
+    #
+    # RGB-recovered roof/glass pixels must NOT automatically
+    # become black windows. That caused the large black blocks
+    # in the previous experiment.
+    # ========================================================
+
+    semantic_filled = fill_holes(
+        semantic_body
+    )
+
+    semantic_holes = cv2.subtract(
+        semantic_filled,
+        semantic_body,
+    )
+    # Window holes are valid only in the upper vehicle region.
+    # This prevents underbody/wheel gaps from being treated as
+    # windows.
+    semantic_holes = cv2.bitwise_and(
+        semantic_holes,
+        upper_region,
+    )
+    filled_area = int(
+        np.sum(
+            final_filled > 0
+        )
+    )
+
+    min_window_area = max(
+        2,
+        int(
+            round(
+                filled_area
+                *
+                0.00005
+            )
+        ),
+    )
+
+    window_mask = keep_largest_components_by_area(
+        semantic_holes,
+        min_area=min_window_area,
+        max_components=32,
+    )
+
+    window_mask = cv2.bitwise_and(
+        window_mask,
+        final_filled,
+    )
+
+    return (
+        alpha,
+        semantic_body,
+        window_mask,
+    )
 
 def apply_window_treatment(rgb, window_mask, args):
     out = rgb.copy()
