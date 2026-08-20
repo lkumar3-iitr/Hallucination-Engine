@@ -17,7 +17,7 @@ Key design
 1. Vehicle is moved high above the CARLA map.
 2. Physics is disabled.
 3. Camera is positioned relative to the vehicle.
-4. No road-only map-layer unloading.
+4. CARLA map geometry is removed before sprite capture.
 5. No background subtraction.
 6. Projected CARLA 3-D bbox defines the segmentation ROI.
 7. CARLA semantic pixels are used only as trusted foreground seeds.
@@ -133,6 +133,17 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--full-dataset",
+        action="store_true",
+        help=(
+            "Generate the complete production view matrix in one run: "
+            "360 angles x distances [5,10,20] m x "
+            "elevations [0,5,10,20] deg. "
+            "Also disables contact-sheet generation."
+        ),
+    )
+
+    parser.add_argument(
         "--skip-contact-sheets",
         action="store_true",
         help=(
@@ -157,6 +168,7 @@ def parse_args():
         nargs="+",
         default=[
             0.0,
+            5.0,
             10.0,
             20.0,
         ],
@@ -1587,6 +1599,136 @@ def make_contact_sheet(
         output_path,
     )
 
+# ============================================================
+# Clean capture world
+# ============================================================
+
+def prepare_clean_capture_world(
+    world,
+    settle_ticks=8,
+):
+    """
+    Prepare CARLA as a clean sprite-capture environment.
+
+    The target vehicle is NOT spawned yet when this function runs.
+
+    Strategy
+    --------
+    1. Require an *_Opt layered CARLA map.
+    2. Hide all static EnvironmentObjects except Sky.
+    3. Unload every optional CARLA map layer.
+    4. Leave the world running and settle for several ticks.
+
+    This removes buildings, vegetation, props, parked vehicles,
+    road geometry, signs, poles, walls, etc. from the rendered
+    capture environment while retaining a simple sky background.
+
+    The operation is intentionally idempotent so --resume works
+    when the generator is restarted against the same CARLA server.
+    """
+
+    map_name = str(
+        world.get_map().name
+    )
+
+    short_map_name = (
+        map_name
+        .replace("\\", "/")
+        .split("/")[-1]
+    )
+
+    print()
+    print(
+        "[GrabCutBank] Preparing clean capture world..."
+    )
+
+    print(
+        "[GrabCutBank] map:",
+        short_map_name,
+    )
+
+    # --------------------------------------------------------
+    # We rely on CARLA layered-map control.
+    # --------------------------------------------------------
+
+    if "_Opt" not in short_map_name:
+
+        raise RuntimeError(
+            "Clean sprite capture requires a CARLA *_Opt map. "
+            f"Current map is: {short_map_name}"
+        )
+
+    # --------------------------------------------------------
+    # Hide all static environment geometry except the sky.
+    #
+    # This also handles objects belonging to CARLA's minimum
+    # map layout that cannot be removed through MapLayer alone.
+    # --------------------------------------------------------
+
+    environment_objects = (
+        world.get_environment_objects(
+            carla.CityObjectLabel.Any
+        )
+    )
+
+    hidden_object_ids = {
+        int(obj.id)
+        for obj in environment_objects
+        if (
+            obj.type
+            !=
+            carla.CityObjectLabel.Sky
+        )
+    }
+
+    if hidden_object_ids:
+
+        world.enable_environment_objects(
+            hidden_object_ids,
+            False,
+        )
+
+    print(
+        "[GrabCutBank] hidden environment objects:",
+        len(hidden_object_ids),
+    )
+
+    # --------------------------------------------------------
+    # Remove all optional layered-map content:
+    #
+    # Buildings
+    # Decals
+    # Foliage
+    # Ground
+    # ParkedVehicles
+    # Particles
+    # Props
+    # StreetLights
+    # Walls
+    # --------------------------------------------------------
+
+    world.unload_map_layer(
+        carla.MapLayer.All
+    )
+
+    print(
+        "[GrabCutBank] optional map layers unloaded."
+    )
+
+    # Give Unreal a few synchronous frames to apply visibility
+    # and streaming changes before spawning the target vehicle.
+    for _ in range(
+        max(
+            1,
+            int(settle_ticks),
+        )
+    ):
+        world.tick()
+
+    print(
+        "[GrabCutBank] clean capture world ready."
+    )
+    print()
 
 # ============================================================
 # Main
@@ -1595,7 +1737,33 @@ def make_contact_sheet(
 def main():
 
     args = parse_args()
-    if args.all_angles:
+
+    if args.full_dataset:
+
+        args.angles = list(
+            range(
+                360
+            )
+        )
+
+        args.distances = [
+            5.0,
+            10.0,
+            20.0,
+        ]
+
+        args.elevations = [
+            0.0,
+            5.0,
+            10.0,
+            20.0,
+        ]
+
+        # 360 contact sheets are unnecessary for the
+        # production generation run.
+        args.skip_contact_sheets = True
+
+    elif args.all_angles:
 
         args.angles = list(
             range(
@@ -1735,8 +1903,15 @@ def main():
             args.fixed_delta_seconds,
         )
 
+        # Remove any vehicles / walkers / sensors left by an earlier run.
         gen.clear_existing_dynamic_actors(
             world
+        )
+
+        # Remove the CARLA town before spawning the sprite vehicle.
+        prepare_clean_capture_world(
+            world=world,
+            settle_ticks=8,
         )
 
         blueprint_library = (
