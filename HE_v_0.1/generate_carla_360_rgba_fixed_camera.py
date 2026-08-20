@@ -431,11 +431,68 @@ def flush_queue(q):
             break
 
 
-def wait_for_frame(q, expected_frame, timeout=5.0):
+def wait_for_frame(q, expected_frame, timeout=5.0, max_timeouts=5):
+    """
+    Wait for a CARLA sensor frame.
+
+    CARLA occasionally takes longer than expected to return a rendered
+    camera frame, especially during long offline data-generation runs.
+    A single queue.Empty should therefore not kill the entire run.
+
+    Parameters
+    ----------
+    q : queue.Queue
+        Sensor callback queue.
+
+    expected_frame : int
+        Minimum CARLA frame number that is acceptable.
+
+    timeout : float
+        Seconds to wait for each queue.get() attempt.
+
+    max_timeouts : int
+        Maximum number of consecutive timeouts before giving up.
+
+    Returns
+    -------
+    carla.Image
+        First image whose frame number is >= expected_frame.
+    """
+
+    timeout_count = 0
+    last_received_frame = None
+
     while True:
-        image = q.get(timeout=timeout)
-        if image.frame >= expected_frame:
-            return image
+        try:
+            image = q.get(timeout=timeout)
+
+            last_received_frame = image.frame
+
+            # Successful reception resets the timeout counter.
+            timeout_count = 0
+
+            if image.frame >= expected_frame:
+                return image
+
+            # Older/stale frame: ignore it and continue waiting.
+            continue
+
+        except queue.Empty:
+            timeout_count += 1
+
+            print(
+                f"[SensorWait] Timeout waiting for frame >= {expected_frame} "
+                f"({timeout_count}/{max_timeouts}); "
+                f"last_received_frame={last_received_frame}"
+            )
+
+            if timeout_count >= max_timeouts:
+                raise RuntimeError(
+                    f"CARLA sensor failed to deliver frame >= {expected_frame} "
+                    f"after {max_timeouts} consecutive waits "
+                    f"of {timeout:.1f}s each. "
+                    f"Last received frame: {last_received_frame}"
+                )
 
 
 def ensure_dirs(output_dir, overwrite):

@@ -115,7 +115,23 @@ def parse_args():
             293,
         ],
     )
+    parser.add_argument(
+        "--all-angles",
+        action="store_true",
+        help=(
+            "Generate every integer azimuth from 0 through 359. "
+            "Overrides --angles."
+        ),
+    )
 
+    parser.add_argument(
+        "--skip-contact-sheets",
+        action="store_true",
+        help=(
+            "Do not create the per-angle distance/elevation "
+            "contact sheets. Useful for 360-degree QA runs."
+        ),
+    )
     parser.add_argument(
         "--distances",
         type=float,
@@ -1086,7 +1102,7 @@ def make_seeded_grabcut_alpha(
     # ========================================================
     # Upper-body hole filling only
     # ========================================================
-    
+
     ys, xs = np.where(
         foreground > 0
     )
@@ -1464,7 +1480,13 @@ def make_contact_sheet(
 def main():
 
     args = parse_args()
+    if args.all_angles:
 
+        args.angles = list(
+            range(
+                360
+            )
+        )
     output_dir = (
         Path(
             args.output_root
@@ -2092,28 +2114,28 @@ def main():
                 writer.writerows(
                     records
                 )
+            if not args.skip_contact_sheets:
+                for angle in args.angles:
 
-            for angle in args.angles:
+                    make_contact_sheet(
+                        output_dir=(
+                            output_dir
+                        ),
 
-                make_contact_sheet(
-                    output_dir=(
-                        output_dir
-                    ),
+                        records=records,
 
-                    records=records,
+                        angle=int(
+                            angle
+                        ) % 360,
 
-                    angle=int(
-                        angle
-                    ) % 360,
+                        distances=(
+                            args.distances
+                        ),
 
-                    distances=(
-                        args.distances
-                    ),
-
-                    elevations=(
-                        args.elevations
-                    ),
-                )
+                        elevations=(
+                            args.elevations
+                        ),
+                    )
 
         print()
         print("=" * 80)

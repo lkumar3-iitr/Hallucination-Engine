@@ -190,7 +190,25 @@ def parse_args():
         type=int,
         default=14,
     )
+    parser.add_argument(
+        "--rgb-diff-threshold",
+        type=int,
+        default=12,
+        help=(
+            "Minimum per-pixel RGB change used to recover "
+            "actor appearance missing from semantic segmentation."
+        ),
+    )
 
+    parser.add_argument(
+        "--rgb-recovery-upper-fraction",
+        type=float,
+        default=0.78,
+        help=(
+            "Fraction of the semantic actor height in which "
+            "broad RGB-difference recovery is allowed."
+        ),
+    )
     parser.add_argument(
         "--min-mask-pixels",
         type=int,
@@ -821,7 +839,117 @@ def make_contact_sheet(
         "[ViewMatrix] Contact sheet:",
         output_path,
     )
+def capture_background_rgb(
+    world,
+    vehicle,
+    rgb_queue,
+    seg_queue,
+):
+    """
+    Capture the static scene with the target actor hidden.
 
+    Vehicle physics is disabled in this generator, so temporarily
+    moving it far below the map is safe and deterministic.
+    """
+
+    original_tf = (
+        vehicle.get_transform()
+    )
+
+    hidden_tf = carla.Transform(
+
+        carla.Location(
+            x=float(
+                original_tf.location.x
+            ),
+
+            y=float(
+                original_tf.location.y
+            ),
+
+            z=(
+                float(
+                    original_tf.location.z
+                )
+                -
+                100.0
+            ),
+        ),
+
+        original_tf.rotation,
+    )
+
+    vehicle.set_transform(
+        hidden_tf
+    )
+
+    gen.flush_queue(
+        rgb_queue
+    )
+
+    gen.flush_queue(
+        seg_queue
+    )
+
+    # Settle hidden actor / render state.
+    for _ in range(3):
+
+        world.tick()
+
+        gen.flush_queue(
+            rgb_queue
+        )
+
+        gen.flush_queue(
+            seg_queue
+        )
+
+    frame = world.tick()
+
+    rgb_image = (
+        gen.wait_for_frame(
+            rgb_queue,
+            frame,
+        )
+    )
+
+    # Drain matching semantic frame.
+    gen.wait_for_frame(
+        seg_queue,
+        frame,
+    )
+
+    background_rgb = (
+        gen.carla_rgb_to_array(
+            rgb_image
+        )
+    )
+
+    vehicle.set_transform(
+        original_tf
+    )
+
+    gen.flush_queue(
+        rgb_queue
+    )
+
+    gen.flush_queue(
+        seg_queue
+    )
+
+    for _ in range(2):
+
+        world.tick()
+
+        gen.flush_queue(
+            rgb_queue
+        )
+
+        gen.flush_queue(
+            seg_queue
+        )
+
+    return background_rgb
 
 # ============================================================
 # Main
@@ -1165,7 +1293,21 @@ def main():
                     gen.flush_queue(
                         seg_queue
                     )
+                background_rgb = (
+                    capture_background_rgb(
+                        world=world,
 
+                        vehicle=vehicle,
+
+                        rgb_queue=(
+                            rgb_queue
+                        ),
+
+                        seg_queue=(
+                            seg_queue
+                        ),
+                    )
+                )
                 for angle in (
                     args.angles
                 ):
@@ -1289,9 +1431,17 @@ def main():
                         body_mask,
                         window_mask,
                     ) = (
-                        gen.make_alpha_and_window_mask(
+                        gen.make_alpha_from_semantic_and_background(
+                            rgb=rgb,
+
+                            background_rgb=(
+                                background_rgb
+                            ),
+
                             tags=tags,
+
                             bbox=bbox,
+
                             args=args,
                         )
                     )
