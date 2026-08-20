@@ -64,6 +64,14 @@ def parse_args():
         "--host",
         default="127.0.0.1",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Resume an interrupted generation run. "
+            "Views already present in view_matrix.csv are skipped."
+        ),
+    )
 
     parser.add_argument(
         "--port",
@@ -1271,6 +1279,113 @@ def safe_float_name(
         )
     )
 
+def make_view_key(
+    angle,
+    distance,
+    elevation,
+):
+    """
+    Stable identity for one sprite-bank view.
+    """
+
+    return (
+        int(angle) % 360,
+        round(float(distance), 6),
+        round(float(elevation), 6),
+    )
+
+
+def load_checkpoint_records(
+    csv_path,
+):
+    """
+    Load metadata from an earlier interrupted run.
+
+    Returns
+    -------
+    records : list[dict]
+        Existing CSV rows.
+
+    completed_keys : set[tuple]
+        (angle, distance, elevation) views already completed.
+    """
+
+    records = []
+    completed_keys = set()
+
+    if not csv_path.exists():
+        return records, completed_keys
+
+    with open(
+        csv_path,
+        "r",
+        newline="",
+        encoding="utf-8",
+    ) as f:
+
+        reader = csv.DictReader(f)
+
+        for row in reader:
+
+            try:
+                key = make_view_key(
+                    row["angle_deg"],
+                    row["distance_m"],
+                    row["elevation_deg"],
+                )
+            except (
+                KeyError,
+                TypeError,
+                ValueError,
+            ):
+                continue
+
+            records.append(row)
+            completed_keys.add(key)
+
+    return records, completed_keys
+
+
+def append_checkpoint_record(
+    csv_path,
+    record,
+):
+    """
+    Append one completed sprite record immediately.
+
+    This makes the CSV crash-safe: after each successful sprite,
+    its metadata is already on disk.
+    """
+
+    write_header = (
+        not csv_path.exists()
+        or
+        csv_path.stat().st_size == 0
+    )
+
+    with open(
+        csv_path,
+        "a",
+        newline="",
+        encoding="utf-8",
+    ) as f:
+
+        writer = csv.DictWriter(
+            f,
+            fieldnames=list(
+                record.keys()
+            ),
+        )
+
+        if write_header:
+            writer.writeheader()
+
+        writer.writerow(
+            record
+        )
+
+        # Force Python's userspace buffer to disk immediately.
+        f.flush()
 
 def make_contact_sheet(
     output_dir,
@@ -1534,7 +1649,35 @@ def main():
     rgb_queue = queue.Queue()
     seg_queue = queue.Queue()
 
+    csv_path = (
+        output_dir
+        /
+        "view_matrix.csv"
+    )
+
     records = []
+    completed_keys = set()
+
+    if args.resume:
+
+        (
+            records,
+            completed_keys,
+        ) = load_checkpoint_records(
+            csv_path
+        )
+
+        print(
+            "[GrabCutBank] Resume enabled:"
+            f" {len(completed_keys)} completed views found."
+        )
+
+    else:
+
+        # Preserve the original fresh-run behavior.
+        # Existing metadata is discarded and regenerated.
+        if csv_path.exists():
+            csv_path.unlink()
 
     try:
 
@@ -1804,6 +1947,29 @@ def main():
                         angle
                     ) % 360
 
+                    view_key = make_view_key(
+                        angle,
+                        distance_m,
+                        elevation_deg,
+                    )
+
+                    if (
+                        args.resume
+                        and
+                        view_key in completed_keys
+                    ):
+
+                        print(
+                            "[GrabCutBank] "
+                            f"{capture_index:04d}/{total:04d} "
+                            f"SKIP "
+                            f"a={angle:03d} "
+                            f"d={distance_m:5.1f}m "
+                            f"e={elevation_deg:5.1f}deg"
+                        )
+
+                        continue
+
                     yaw = gen.vehicle_yaw_for_angle(
                         base_yaw,
                         angle,
@@ -2072,6 +2238,19 @@ def main():
                         record
                     )
 
+                    completed_keys.add(
+                        make_view_key(
+                            angle,
+                            distance_m,
+                            elevation_deg,
+                        )
+                    )
+
+                    append_checkpoint_record(
+                        csv_path,
+                        record,
+                    )
+
                     print(
                         "[GrabCutBank] "
                         f"{capture_index:02d}/{total:02d} "
@@ -2085,11 +2264,7 @@ def main():
                         f"{alpha_pixels}"
                     )
 
-        csv_path = (
-            output_dir
-            /
-            "view_matrix.csv"
-        )
+
 
         if records:
 
