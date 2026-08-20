@@ -357,11 +357,64 @@ def adversary_local_state_at_time(args, t_s):
 
         z = float(args.start_distance) + float(args.adv_speed) * float(t_s)
 
-        # Approximate heading from dx/dz during cut-in.
+        # ------------------------------------------------------------
+        # Heading from the tangent of the smoothstep trajectory.
+        #
+        # Lateral trajectory:
+        #
+        #     x(alpha) = x0 + (x1 - x0) * (3a^2 - 2a^3)
+        #
+        # where:
+        #
+        #     alpha = (t - cut_start) / cut_duration
+        #
+        # Therefore:
+        #
+        #     ds/dalpha = 6a(1-a)
+        #
+        # and:
+        #
+        #     dx/dt = (x1 - x0) * 6a(1-a) / cut_duration
+        #     dz/dt = adv_speed
+        #
+        # Using the trajectory tangent makes yaw naturally start at 0,
+        # increase smoothly during the lane change, and return to 0.
+        # ------------------------------------------------------------
+
         if 0.0 < alpha < 1.0:
-            dx = x1 - x0
-            dz = max(0.01, float(args.adv_speed) * cut_duration)
-            yaw_deg = math.degrees(math.atan2(dx, dz))
+
+            ds_dalpha = (
+                6.0
+                * alpha
+                * (1.0 - alpha)
+            )
+
+            dx_dt = (
+                (x1 - x0)
+                * ds_dalpha
+                / cut_duration
+            )
+
+            dz_dt = float(
+                args.adv_speed
+            )
+
+            if (
+                abs(dx_dt)
+                +
+                abs(dz_dt)
+                >
+                1e-9
+            ):
+                yaw_deg = math.degrees(
+                    math.atan2(
+                        dx_dt,
+                        dz_dt,
+                    )
+                )
+            else:
+                yaw_deg = 0.0
+
         else:
             yaw_deg = 0.0
 
