@@ -24,6 +24,7 @@ Example:
 """
 
 import argparse
+import csv
 import json
 import math
 import shutil
@@ -1450,6 +1451,575 @@ def compute_sprite_angle_for_adversary(
     """
 
     return compute_viewpoint_sprite_angle(state)
+
+# ============================================================
+# View-matrix sprite selection
+# ============================================================
+
+def sprite_filename_from_any_path(path_text):
+    """
+    Extract only the filename from either a Windows or Linux path.
+
+    This allows sprite-bank CSV files generated on the server to be
+    copied to Windows without rewriting their stored absolute paths.
+    """
+
+    text = str(path_text).replace("\\", "/")
+    return text.split("/")[-1]
+
+
+def make_view_matrix_key(
+    angle_deg,
+    distance_m,
+    elevation_deg,
+):
+    return (
+        int(angle_deg) % 360,
+        round(float(distance_m), 6),
+        round(float(elevation_deg), 6),
+    )
+
+
+def circular_angle_error_deg(a_deg, b_deg):
+    return abs(
+        normalize_angle_180(
+            float(a_deg) - float(b_deg)
+        )
+    )
+
+
+def nearest_linear_value(
+    query_value,
+    available_values,
+):
+    return min(
+        available_values,
+        key=lambda value: abs(
+            float(query_value) - float(value)
+        ),
+    )
+
+
+def load_view_matrix_sprite_bank(sprite_bank):
+    """
+    Load one or more generated view_matrix.csv files.
+
+    Expected sprite_bank configuration:
+
+        {
+            "mode": "view_matrix",
+
+            "view_matrix_csvs": [
+                "D:/HE_Data/.../e0/view_matrix.csv",
+                "D:/HE_Data/.../e10/view_matrix.csv"
+            ],
+
+            "target_height_m": 0.75
+        }
+
+    Returns a dictionary containing:
+
+        records
+        index
+        angles
+        distances
+        elevations
+    """
+
+    csv_paths = sprite_bank.get(
+        "view_matrix_csvs",
+        []
+    )
+
+    if not csv_paths:
+        raise RuntimeError(
+            "sprite_bank.mode='view_matrix' but "
+            "sprite_bank.view_matrix_csvs is empty."
+        )
+
+    records = []
+    index = {}
+
+    for csv_path_text in csv_paths:
+
+        csv_path = Path(
+            csv_path_text
+        )
+
+        if not csv_path.exists():
+            raise FileNotFoundError(
+                f"View-matrix CSV not found: {csv_path}"
+            )
+
+        bank_root = csv_path.parent
+        rgba_dir = bank_root / "rgba"
+
+        local_count = 0
+
+        with open(
+            csv_path,
+            "r",
+            newline="",
+            encoding="utf-8",
+        ) as f:
+
+            reader = csv.DictReader(f)
+
+            for row in reader:
+
+                angle_deg = int(
+                    float(
+                        row["angle_deg"]
+                    )
+                ) % 360
+
+                distance_m = float(
+                    row["distance_m"]
+                )
+
+                elevation_deg = float(
+                    row["elevation_deg"]
+                )
+
+                rgba_filename = (
+                    sprite_filename_from_any_path(
+                        row.get(
+                            "rgba_path",
+                            ""
+                        )
+                    )
+                )
+
+                local_rgba_path = (
+                    rgba_dir
+                    /
+                    rgba_filename
+                )
+
+                key = make_view_matrix_key(
+                    angle_deg,
+                    distance_m,
+                    elevation_deg,
+                )
+
+                record = {
+                    "angle_deg": angle_deg,
+                    "distance_m": distance_m,
+                    "elevation_deg": elevation_deg,
+
+                    "sprite_width_px": int(
+                        float(
+                            row.get(
+                                "sprite_width_px",
+                                0,
+                            )
+                        )
+                    ),
+
+                    "sprite_height_px": int(
+                        float(
+                            row.get(
+                                "sprite_height_px",
+                                0,
+                            )
+                        )
+                    ),
+
+                    "anchor_x": float(
+                        row.get(
+                            "anchor_x",
+                            0.0,
+                        )
+                    ),
+
+                    "anchor_y": float(
+                        row.get(
+                            "anchor_y",
+                            0.0,
+                        )
+                    ),
+
+                    "rgba_path": str(
+                        local_rgba_path
+                    ),
+                }
+
+                if key in index:
+                    raise RuntimeError(
+                        f"Duplicate view-matrix key: {key}"
+                    )
+
+                if not local_rgba_path.exists():
+                    raise FileNotFoundError(
+                        f"View-matrix sprite not found: "
+                        f"{local_rgba_path}"
+                    )
+
+                index[key] = record
+                records.append(record)
+                local_count += 1
+
+        print(
+            "[ViewMatrix] Loaded",
+            local_count,
+            "views from",
+            csv_path,
+        )
+
+    angles = sorted(
+        set(
+            int(record["angle_deg"])
+            for record in records
+        )
+    )
+
+    distances = sorted(
+        set(
+            float(record["distance_m"])
+            for record in records
+        )
+    )
+
+    elevations = sorted(
+        set(
+            float(record["elevation_deg"])
+            for record in records
+        )
+    )
+
+    expected_count = (
+        len(angles)
+        *
+        len(distances)
+        *
+        len(elevations)
+    )
+
+    print(
+        "[ViewMatrix] Total views:",
+        len(records)
+    )
+
+    print(
+        "[ViewMatrix] Angles:",
+        len(angles)
+    )
+
+    print(
+        "[ViewMatrix] Distances:",
+        distances
+    )
+
+    print(
+        "[ViewMatrix] Elevations:",
+        elevations
+    )
+
+    if len(index) != expected_count:
+        print(
+            "[ViewMatrix] WARNING: bank is not a complete "
+            "angle x distance x elevation grid."
+        )
+
+    return {
+        "records": records,
+        "index": index,
+        "angles": angles,
+        "distances": distances,
+        "elevations": elevations,
+    }
+
+
+def compute_view_matrix_coordinates(
+    state,
+    target_height_m=0.75,
+    vertical_mode="state_y",
+    camera_height_m=1.60,
+):
+    """
+    Convert final HE camera-relative state into view-matrix coordinates.
+
+    HE state:
+        x_m = lateral
+        y_m = actor-base vertical position relative to camera
+        z_m = forward depth
+        yaw_deg = actor heading relative to camera
+
+    Returns:
+        viewpoint_angle_deg
+        distance_m
+        elevation_deg
+    """
+
+    x_m = float(
+        state.get(
+            "x_m",
+            0.0
+        )
+    )
+
+    y_m = float(
+        state.get(
+            "y_m",
+            0.0
+        )
+    )
+
+    z_m = float(
+        state.get(
+            "z_m",
+            0.0
+        )
+    )
+
+    yaw_deg = float(
+        state.get(
+            "yaw_deg",
+            0.0
+        )
+    )
+
+    # Preserve the already validated HE physical-viewpoint convention.
+    viewpoint_angle_deg = (
+        compute_viewpoint_sprite_angle(
+            state
+        )
+    )
+
+    if vertical_mode == "state_y":
+
+        # y_m is already the actor base height relative to camera.
+        # This is correct for ego-pose/world transformed states.
+        target_y_m = (
+            y_m
+            +
+            float(target_height_m)
+        )
+
+    elif vertical_mode == "level_ground":
+
+        # Compatibility mode for older HE scenarios where y_m=0
+        # means "actor is on the road", rather than literally at
+        # the camera's vertical position.
+        target_y_m = (
+            -float(camera_height_m)
+            +
+            float(target_height_m)
+        )
+
+    else:
+
+        raise ValueError(
+            f"Unsupported view-matrix vertical_mode: "
+            f"{vertical_mode}"
+        )
+
+    horizontal_distance_m = math.sqrt(
+        x_m * x_m
+        +
+        z_m * z_m
+    )
+
+    distance_m = math.sqrt(
+        horizontal_distance_m
+        *
+        horizontal_distance_m
+        +
+        target_y_m
+        *
+        target_y_m
+    )
+
+    elevation_deg = math.degrees(
+        math.atan2(
+            -target_y_m,
+            horizontal_distance_m,
+        )
+    )
+
+    return {
+        "viewpoint_angle_deg":
+            float(viewpoint_angle_deg),
+
+        "distance_m":
+            float(distance_m),
+
+        "elevation_deg":
+            float(elevation_deg),
+
+        "horizontal_distance_m":
+            float(horizontal_distance_m),
+
+        "target_y_m":
+            float(target_y_m),
+
+        "yaw_deg":
+            float(yaw_deg),
+    }
+
+
+def select_view_matrix_sprite(
+    state,
+    sprite_bank,
+    view_matrix,
+):
+    """
+    Select nearest available:
+
+        azimuth
+        distance
+        elevation
+    """
+
+    target_height_m = float(
+        sprite_bank.get(
+            "target_height_m",
+            0.75,
+        )
+    )
+
+    vertical_mode = sprite_bank.get(
+        "vertical_mode",
+        "state_y",
+    )
+
+    camera_height_m = float(
+        sprite_bank.get(
+            "camera_height_m",
+            1.60,
+        )
+    )
+
+    query = compute_view_matrix_coordinates(
+        state=state,
+        target_height_m=target_height_m,
+        vertical_mode=vertical_mode,
+        camera_height_m=camera_height_m,
+    )
+
+    selected_angle = min(
+        view_matrix["angles"],
+        key=lambda value:
+            circular_angle_error_deg(
+                query[
+                    "viewpoint_angle_deg"
+                ],
+                value,
+            ),
+    )
+
+    selected_distance = nearest_linear_value(
+        query["distance_m"],
+        view_matrix["distances"],
+    )
+
+    selected_elevation = nearest_linear_value(
+        query["elevation_deg"],
+        view_matrix["elevations"],
+    )
+
+    key = make_view_matrix_key(
+        selected_angle,
+        selected_distance,
+        selected_elevation,
+    )
+
+    record = (
+        view_matrix["index"].get(
+            key
+        )
+    )
+
+    if record is None:
+        raise RuntimeError(
+            f"Selected view-matrix coordinate "
+            f"does not exist: {key}"
+        )
+
+    sprite_path = Path(
+        record["rgba_path"]
+    )
+
+    return {
+        "mode": "view_matrix",
+
+        "relative_angle_deg":
+            float(
+                query[
+                    "viewpoint_angle_deg"
+                ]
+            ),
+
+        "selected_angle":
+            int(selected_angle),
+
+        "angle_error_deg":
+            float(
+                circular_angle_error_deg(
+                    query[
+                        "viewpoint_angle_deg"
+                    ],
+                    selected_angle,
+                )
+            ),
+
+        "query_distance_m":
+            float(
+                query["distance_m"]
+            ),
+
+        "selected_distance_m":
+            float(
+                selected_distance
+            ),
+
+        "distance_error_m":
+            float(
+                abs(
+                    query["distance_m"]
+                    -
+                    selected_distance
+                )
+            ),
+
+        "query_elevation_deg":
+            float(
+                query["elevation_deg"]
+            ),
+
+        "selected_elevation_deg":
+            float(
+                selected_elevation
+            ),
+
+        "elevation_error_deg":
+            float(
+                abs(
+                    query["elevation_deg"]
+                    -
+                    selected_elevation
+                )
+            ),
+
+        "sprite_path":
+            str(sprite_path),
+
+        "exists":
+            sprite_path.exists(),
+        "anchor_x":
+            float(record["anchor_x"]),
+
+        "anchor_y":
+            float(record["anchor_y"]),
+
+        "source_sprite_width_px":
+            int(record["sprite_width_px"]),
+
+        "source_sprite_height_px":
+            int(record["sprite_height_px"]),
+    }
+
+
 def discover_available_sprite_angles(sprite_bank):
     root = Path(sprite_bank["root"])
     rgba_dir = sprite_bank.get("rgba_dir", "rgba")
@@ -1541,6 +2111,110 @@ def resize_sprite_to_box(sprite_rgba, target_box_h):
 
     return resized
 
+def get_visible_alpha_bbox(
+    sprite_rgba,
+    alpha_threshold=10,
+):
+    """
+    Compute the bounding box of the visible (alpha) part of a sprite.
+    """
+
+    alpha = sprite_rgba[:, :, 3]
+
+    ys, xs = np.where(
+        alpha > int(alpha_threshold)
+    )
+
+    if len(xs) == 0 or len(ys) == 0:
+        raise RuntimeError(
+            "Sprite has no visible alpha pixels."
+        )
+
+    x1 = int(xs.min())
+    y1 = int(ys.min())
+    x2 = int(xs.max())
+    y2 = int(ys.max())
+
+    return {
+        "x1": x1,
+        "y1": y1,
+        "x2": x2,
+        "y2": y2,
+        "width": int(x2 - x1 + 1),
+        "height": int(y2 - y1 + 1),
+    }
+
+
+def resize_view_matrix_sprite_to_box(
+    sprite_rgba,
+    target_box_h,
+    anchor_x,
+    anchor_y,
+    alpha_threshold=10,
+):
+    """
+    Resize a view-matrix sprite so that its VISIBLE alpha height
+    matches the projected HE box height.
+
+    Returns:
+        resized_sprite_rgba
+        resize_info
+    """
+
+    visible_bbox = get_visible_alpha_bbox(
+        sprite_rgba=sprite_rgba,
+        alpha_threshold=alpha_threshold,
+    )
+
+    visible_h = max(
+        1,
+        int(visible_bbox["height"])
+    )
+
+    target_h = max(
+        1,
+        int(round(target_box_h))
+    )
+
+    scale = target_h / float(visible_h)
+
+    src_h, src_w = sprite_rgba.shape[:2]
+
+    resized_w = max(
+        1,
+        int(round(src_w * scale))
+    )
+
+    resized_h = max(
+        1,
+        int(round(src_h * scale))
+    )
+
+    interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+
+    resized = cv2.resize(
+        sprite_rgba,
+        (resized_w, resized_h),
+        interpolation=interp,
+    )
+
+    resize_info = {
+        "scale": float(scale),
+
+        "source_width": int(src_w),
+        "source_height": int(src_h),
+
+        "visible_bbox": visible_bbox,
+        "visible_height": int(visible_h),
+
+        "resized_width": int(resized_w),
+        "resized_height": int(resized_h),
+
+        "scaled_anchor_x": float(anchor_x) * scale,
+        "scaled_anchor_y": float(anchor_y) * scale,
+    }
+
+    return resized, resize_info
 
 # ============================================================
 # Compositor
@@ -1751,7 +2425,39 @@ def run_scenario(scenario, overwrite=False):
     writer = cv2.VideoWriter(str(output_video_path), fourcc, output_fps, (frame_w, frame_h))
     debug_writer = cv2.VideoWriter(str(debug_video_path), fourcc, output_fps, (frame_w, frame_h))
 
-    available_angles = discover_available_sprite_angles(sprite_bank)
+    sprite_bank_mode = (
+        sprite_bank.get(
+            "mode",
+            "angle_only"
+        )
+    )
+
+    available_angles = None
+    view_matrix = None
+
+    if sprite_bank_mode == "view_matrix":
+
+        view_matrix = (
+            load_view_matrix_sprite_bank(
+                sprite_bank
+            )
+        )
+
+    elif sprite_bank_mode == "angle_only":
+
+        available_angles = (
+            discover_available_sprite_angles(
+                sprite_bank
+            )
+        )
+
+    else:
+
+        raise ValueError(
+            f"Unsupported sprite_bank mode: "
+            f"{sprite_bank_mode}"
+        )
+
     sprite_cache = SpriteCache()
 
     camera_yaw_deg = float(camera.get("yaw_deg", 0.0))
@@ -1768,7 +2474,13 @@ def run_scenario(scenario, overwrite=False):
         "total_frames": total_frames,
         "start_frame": start_frame,
         "end_frame": end_frame,
-        "available_sprite_count": len(available_angles),
+        "sprite_bank_mode": sprite_bank_mode,
+
+        "available_sprite_count": (
+            len(view_matrix["records"])
+            if view_matrix is not None
+            else len(available_angles)
+        ),
         "frames": []
     }
 
@@ -1944,12 +2656,23 @@ def run_scenario(scenario, overwrite=False):
                     t_sec=t_sec,
                 )
 
-                sprite_info = select_sprite(
-                    sprite_bank=sprite_bank,
-                    relative_angle_deg=relative_angle,
-                    available_angles=available_angles
-                    
-                )
+                if sprite_bank_mode == "view_matrix":
+
+                    sprite_info = (
+                        select_view_matrix_sprite(
+                            state=state,
+                            sprite_bank=sprite_bank,
+                            view_matrix=view_matrix,
+                        )
+                    )
+
+                else:
+
+                    sprite_info = select_sprite(
+                        sprite_bank=sprite_bank,
+                        relative_angle_deg=relative_angle,
+                        available_angles=available_angles,
+                    )
 
                 if not sprite_info["exists"]:
                     adv_meta["sprite"] = sprite_info
@@ -1960,28 +2683,56 @@ def run_scenario(scenario, overwrite=False):
                     sprite_info["sprite_path"]
                 )
 
-                # Resize sprite so its height matches the projected 2D box height.
-                sprite_resized = resize_sprite_to_box(
-                    sprite_rgba=sprite_rgba,
-                    target_box_h=box["box_height"]
-                )
+                if sprite_bank_mode == "view_matrix":
 
-                spr_h, spr_w = sprite_resized.shape[:2]
-
-                # Anchor: bottom-center of sprite goes to projected bottom-center.
-                paste_x1 = int(
-                    round(
-                        box["cx"]
-                        - spr_w / 2.0
+                    sprite_resized, resize_info = resize_view_matrix_sprite_to_box(
+                        sprite_rgba=sprite_rgba,
+                        target_box_h=box["box_height"],
+                        anchor_x=sprite_info["anchor_x"],
+                        anchor_y=sprite_info["anchor_y"],
                     )
-                )
 
-                paste_y1 = int(
-                    round(
-                        box["bottom_y"]
-                        - spr_h
+                    spr_h, spr_w = sprite_resized.shape[:2]
+
+                    paste_x1 = int(
+                        round(
+                            box["cx"]
+                            - resize_info["scaled_anchor_x"]
+                        )
                     )
-                )
+
+                    paste_y1 = int(
+                        round(
+                            box["bottom_y"]
+                            - resize_info["scaled_anchor_y"]
+                        )
+                    )
+
+                else:
+
+                    # Legacy angle-only behavior.
+                    sprite_resized = resize_sprite_to_box(
+                        sprite_rgba=sprite_rgba,
+                        target_box_h=box["box_height"]
+                    )
+
+                    spr_h, spr_w = sprite_resized.shape[:2]
+
+                    paste_x1 = int(
+                        round(
+                            box["cx"]
+                            - spr_w / 2.0
+                        )
+                    )
+
+                    paste_y1 = int(
+                        round(
+                            box["bottom_y"]
+                            - spr_h
+                        )
+                    )
+
+                    resize_info = None
 
                 alpha = float(
                     adv.get(
@@ -2021,6 +2772,7 @@ def run_scenario(scenario, overwrite=False):
                         "sprite_width": spr_w,
                         "sprite_height": spr_h,
                     },
+                    "view_matrix_resize": resize_info,
 
                     "rendered": False,
                 })
