@@ -38,8 +38,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
+import os
 import queue
+import random
 import traceback
 from pathlib import Path
 
@@ -84,7 +87,23 @@ def parse_args():
         type=float,
         default=20.0,
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=1337,
+        help=(
+            "Deterministic RNG seed used by Python, NumPy, "
+            "and OpenCV during sprite generation."
+        ),
+    )
 
+    parser.add_argument(
+        "--required-map",
+        default="Town10HD_Opt",
+        help=(
+            "Exact CARLA map required for production generation."
+        ),
+    )
     parser.add_argument(
         "--vehicle-blueprint",
         default="vehicle.tesla.model3",
@@ -1290,6 +1309,634 @@ def safe_float_name(
             "p",
         )
     )
+# ============================================================
+# Production dataset bookkeeping
+# ============================================================
+
+def expected_view_paths(
+    output_dir,
+    angle,
+    distance,
+    elevation,
+):
+    """
+    Return the three files that define one completed view.
+    """
+
+    angle = int(angle) % 360
+
+    d_name = safe_float_name(
+        distance
+    )
+
+    e_name = safe_float_name(
+        elevation
+    )
+
+    stem = (
+        f"d_{d_name}_"
+        f"e_{e_name}_"
+        f"angle_{angle:03d}"
+    )
+
+    output_dir = Path(
+        output_dir
+    )
+
+    return {
+        "rgba":
+            output_dir
+            /
+            "rgba"
+            /
+            f"{stem}_rgba.png",
+
+        "mask":
+            output_dir
+            /
+            "mask"
+            /
+            f"{stem}_mask.png",
+
+        "debug":
+            output_dir
+            /
+            "debug"
+            /
+            f"{stem}_debug.png",
+    }
+
+def atomic_save_image(
+    save_function,
+    path,
+    image,
+):
+    """
+    Save an image to a temporary PNG and atomically replace
+    the destination only after the write succeeds.
+    """
+
+    path = Path(
+        path
+    )
+
+    temp_path = path.with_name(
+        path.stem
+        +
+        ".tmp"
+        +
+        path.suffix
+    )
+
+    if temp_path.exists():
+        temp_path.unlink()
+
+    save_function(
+        temp_path,
+        image,
+    )
+
+    if not file_is_nonempty(
+        temp_path
+    ):
+
+        raise RuntimeError(
+            "Temporary image write failed: "
+            f"{temp_path}"
+        )
+
+    os.replace(
+        temp_path,
+        path,
+    )
+
+def file_is_nonempty(
+    path,
+):
+    path = Path(
+        path
+    )
+
+    return (
+        path.exists()
+        and
+        path.is_file()
+        and
+        path.stat().st_size > 0
+    )
+
+
+def build_generation_signature(
+    args,
+):
+    """
+    Configuration that must remain identical across --resume runs.
+    """
+
+    return {
+        "schema_version":
+            2,
+
+        "vehicle_blueprint":
+            str(
+                args.vehicle_blueprint
+            ),
+
+        "color":
+            str(
+                args.color
+            ),
+
+        "required_map":
+            str(
+                args.required_map
+            ),
+
+        "image_width":
+            int(
+                args.image_width
+            ),
+
+        "image_height":
+            int(
+                args.image_height
+            ),
+
+        "fov_deg":
+            float(
+                args.fov
+            ),
+
+        "capture_altitude_m":
+            float(
+                args.capture_altitude
+            ),
+
+        "target_height_m":
+            float(
+                args.target_height
+            ),
+
+        "angles_deg": [
+            int(v) % 360
+            for v in args.angles
+        ],
+
+        "distances_m": [
+            float(v)
+            for v in args.distances
+        ],
+
+        "elevations_deg": [
+            float(v)
+            for v in args.elevations
+        ],
+
+        "vehicle_semantic_tag":
+            int(
+                args.vehicle_semantic_tag
+            ),
+
+        "grabcut_iterations":
+            int(
+                args.grabcut_iterations
+            ),
+
+        "bbox_expand_ratio":
+            float(
+                args.bbox_expand_ratio
+            ),
+
+        "crop_margin_px":
+            int(
+                args.crop_margin_px
+            ),
+
+        "upper_hole_fraction":
+            float(
+                args.upper_hole_fraction
+            ),
+
+        "window_mode":
+            str(
+                args.window_mode
+            ),
+
+        "window_black_value":
+            int(
+                args.window_black_value
+            ),
+
+        "window_darken_factor":
+            float(
+                args.window_darken_factor
+            ),
+
+        "fixed_delta_seconds":
+            float(
+                args.fixed_delta_seconds
+            ),
+
+        "settle_ticks":
+            int(
+                args.settle_ticks
+            ),
+
+        "seed":
+            int(
+                args.seed
+            ),
+
+        "weather":
+            "ClearNoon",
+
+        "clean_world":
+            True,
+    }
+
+
+def atomic_write_json(
+    path,
+    data,
+):
+    path = Path(
+        path
+    )
+
+    temp_path = path.with_suffix(
+        path.suffix + ".tmp"
+    )
+
+    with open(
+        temp_path,
+        "w",
+        encoding="utf-8",
+    ) as f:
+
+        json.dump(
+            data,
+            f,
+            indent=2,
+        )
+
+        f.flush()
+        os.fsync(
+            f.fileno()
+        )
+
+    temp_path.replace(
+        path
+    )
+
+
+def output_has_existing_dataset(
+    output_dir,
+):
+    output_dir = Path(
+        output_dir
+    )
+
+    csv_path = (
+        output_dir
+        /
+        "view_matrix.csv"
+    )
+
+    if csv_path.exists():
+        return True
+
+    for subdir in [
+        "rgba",
+        "mask",
+        "debug",
+    ]:
+
+        folder = (
+            output_dir
+            /
+            subdir
+        )
+
+        if (
+            folder.exists()
+            and
+            any(
+                folder.glob(
+                    "*.png"
+                )
+            )
+        ):
+            return True
+
+    return False
+
+
+def initialize_or_validate_generation_config(
+    output_dir,
+    args,
+):
+    """
+    Prevent different generation settings from being mixed into
+    one sprite bank.
+    """
+
+    output_dir = Path(
+        output_dir
+    )
+
+    config_path = (
+        output_dir
+        /
+        "generation_config.json"
+    )
+
+    signature = (
+        build_generation_signature(
+            args
+        )
+    )
+
+    dataset_exists = (
+        output_has_existing_dataset(
+            output_dir
+        )
+    )
+
+    # Fresh generation must not silently reuse old sprites.
+    if (
+        not args.resume
+        and
+        dataset_exists
+    ):
+
+        raise RuntimeError(
+            "Output directory already contains sprite-bank data:\n"
+            f"  {output_dir}\n"
+            "Delete it first or use --resume."
+        )
+
+    if config_path.exists():
+
+        with open(
+            config_path,
+            "r",
+            encoding="utf-8",
+        ) as f:
+
+            existing = json.load(
+                f
+            )
+
+        existing_signature = (
+            existing.get(
+                "generation"
+            )
+        )
+
+        if (
+            existing_signature
+            !=
+            signature
+        ):
+
+            raise RuntimeError(
+                "Generation configuration does not match the "
+                "existing sprite bank.\n\n"
+                "Existing:\n"
+                +
+                json.dumps(
+                    existing_signature,
+                    indent=2,
+                )
+                +
+                "\n\nRequested:\n"
+                +
+                json.dumps(
+                    signature,
+                    indent=2,
+                )
+            )
+
+        print(
+            "[GrabCutBank] generation_config.json matches."
+        )
+
+        return (
+            config_path,
+            existing,
+        )
+
+    # Existing sprites without a configuration fingerprint are
+    # unsafe to resume as a production dataset.
+    if (
+        args.resume
+        and
+        dataset_exists
+    ):
+
+        raise RuntimeError(
+            "Existing sprite-bank data was found but "
+            "generation_config.json is missing. "
+            "Delete the old output before starting the new "
+            "production generation."
+        )
+
+    document = {
+        "generation":
+            signature,
+
+        "runtime":
+            None,
+    }
+
+    atomic_write_json(
+        config_path,
+        document,
+    )
+
+    print(
+        "[GrabCutBank] Created:",
+        config_path,
+    )
+
+    return (
+        config_path,
+        document,
+    )
+
+
+def validate_runtime_environment(
+    config_path,
+    config_document,
+    client,
+    world,
+    args,
+):
+    """
+    Validate CARLA map/version across resumed runs.
+    """
+
+    map_name = str(
+        world.get_map().name
+    )
+
+    short_map_name = (
+        map_name
+        .replace("\\", "/")
+        .split("/")[-1]
+    )
+
+    if (
+        short_map_name
+        !=
+        str(
+            args.required_map
+        )
+    ):
+
+        raise RuntimeError(
+            "Wrong CARLA map for sprite generation.\n"
+            f"Required: {args.required_map}\n"
+            f"Current : {short_map_name}"
+        )
+
+    runtime = {
+        "map":
+            short_map_name,
+
+        "carla_client_version":
+            str(
+                client.get_client_version()
+            ),
+
+        "carla_server_version":
+            str(
+                client.get_server_version()
+            ),
+    }
+
+    existing_runtime = (
+        config_document.get(
+            "runtime"
+        )
+    )
+
+    if (
+        existing_runtime is not None
+        and
+        existing_runtime != runtime
+    ):
+
+        raise RuntimeError(
+            "CARLA runtime differs from the runtime used to "
+            "start this sprite bank.\n\n"
+            "Existing:\n"
+            +
+            json.dumps(
+                existing_runtime,
+                indent=2,
+            )
+            +
+            "\n\nCurrent:\n"
+            +
+            json.dumps(
+                runtime,
+                indent=2,
+            )
+        )
+
+    config_document[
+        "runtime"
+    ] = runtime
+
+    atomic_write_json(
+        config_path,
+        config_document,
+    )
+
+    print(
+        "[GrabCutBank] CARLA runtime validated:"
+    )
+
+    print(
+        "[GrabCutBank]   map:",
+        runtime["map"],
+    )
+
+    print(
+        "[GrabCutBank]   client:",
+        runtime[
+            "carla_client_version"
+        ],
+    )
+
+    print(
+        "[GrabCutBank]   server:",
+        runtime[
+            "carla_server_version"
+        ],
+    )
+def make_view_rng_seed(
+    base_seed,
+    angle,
+    distance,
+    elevation,
+):
+    """
+    Stable deterministic RNG seed for one view.
+
+    This makes a resumed generation produce the same sprite
+    regardless of how many earlier views were skipped.
+    """
+
+    angle_i = int(
+        angle
+    ) % 360
+
+    distance_mm = int(
+        round(
+            float(distance)
+            *
+            1000.0
+        )
+    )
+
+    elevation_mdeg = int(
+        round(
+            float(elevation)
+            *
+            1000.0
+        )
+    )
+
+    value = (
+        int(base_seed)
+        *
+        1000003
+        +
+        angle_i
+        *
+        9176
+        +
+        distance_mm
+        *
+        131
+        +
+        elevation_mdeg
+        *
+        17
+    )
+
+    # OpenCV expects a normal signed integer seed.
+    value = (
+        value
+        &
+        0x7FFFFFFF
+    )
+
+    return int(
+        value
+    )
 
 def make_view_key(
     angle,
@@ -1309,24 +1956,21 @@ def make_view_key(
 
 def load_checkpoint_records(
     csv_path,
+    output_dir,
 ):
     """
-    Load metadata from an earlier interrupted run.
+    Load only genuinely completed views.
 
-    Returns
-    -------
-    records : list[dict]
-        Existing CSV rows.
+    A CSV row is considered complete only when its RGBA, mask,
+    and debug PNG all exist and are non-empty.
 
-    completed_keys : set[tuple]
-        (angle, distance, elevation) views already completed.
+    Duplicate CSV rows are collapsed by view key.
     """
 
-    records = []
-    completed_keys = set()
+    record_by_key = {}
 
     if not csv_path.exists():
-        return records, completed_keys
+        return [], set()
 
     with open(
         csv_path,
@@ -1335,27 +1979,103 @@ def load_checkpoint_records(
         encoding="utf-8",
     ) as f:
 
-        reader = csv.DictReader(f)
+        reader = csv.DictReader(
+            f
+        )
 
         for row in reader:
 
             try:
-                key = make_view_key(
-                    row["angle_deg"],
-                    row["distance_m"],
-                    row["elevation_deg"],
+
+                angle = int(
+                    float(
+                        row[
+                            "angle_deg"
+                        ]
+                    )
+                ) % 360
+
+                distance = float(
+                    row[
+                        "distance_m"
+                    ]
                 )
+
+                elevation = float(
+                    row[
+                        "elevation_deg"
+                    ]
+                )
+
+                key = make_view_key(
+                    angle,
+                    distance,
+                    elevation,
+                )
+
             except (
                 KeyError,
                 TypeError,
                 ValueError,
             ):
+
                 continue
 
-            records.append(row)
-            completed_keys.add(key)
+            paths = expected_view_paths(
+                output_dir=output_dir,
+                angle=angle,
+                distance=distance,
+                elevation=elevation,
+            )
 
-    return records, completed_keys
+            files_ok = all(
+                file_is_nonempty(
+                    path
+                )
+                for path
+                in paths.values()
+            )
+
+            if not files_ok:
+
+                print(
+                    "[GrabCutBank] Resume: incomplete view "
+                    "will be regenerated: "
+                    f"a={angle:03d} "
+                    f"d={distance:g} "
+                    f"e={elevation:g}"
+                )
+
+                continue
+
+            # Make the CSV path correct for the machine currently
+            # performing generation.
+            row[
+                "rgba_path"
+            ] = str(
+                paths[
+                    "rgba"
+                ].resolve()
+            )
+
+            # If a crash created duplicate CSV rows, latest valid
+            # row wins.
+            record_by_key[
+                key
+            ] = row
+
+    records = list(
+        record_by_key.values()
+    )
+
+    completed_keys = set(
+        record_by_key.keys()
+    )
+
+    return (
+        records,
+        completed_keys,
+    )
 
 
 def append_checkpoint_record(
@@ -1398,6 +2118,277 @@ def append_checkpoint_record(
 
         # Force Python's userspace buffer to disk immediately.
         f.flush()
+
+def atomic_write_records_csv(
+    csv_path,
+    records,
+):
+    """
+    Atomically rewrite the canonical view_matrix.csv.
+    """
+
+    if not records:
+        return
+
+    csv_path = Path(
+        csv_path
+    )
+
+    temp_path = csv_path.with_name(
+        csv_path.stem
+        +
+        ".tmp"
+        +
+        csv_path.suffix
+    )
+
+    with open(
+        temp_path,
+        "w",
+        newline="",
+        encoding="utf-8",
+    ) as f:
+
+        writer = csv.DictWriter(
+            f,
+            fieldnames=list(
+                records[
+                    0
+                ].keys()
+            ),
+        )
+
+        writer.writeheader()
+
+        writer.writerows(
+            records
+        )
+
+        f.flush()
+
+        os.fsync(
+            f.fileno()
+        )
+
+    os.replace(
+        temp_path,
+        csv_path,
+    )
+
+
+def validate_completed_dataset(
+    output_dir,
+    records,
+    args,
+):
+    """
+    Final production-bank integrity check.
+
+    Returns records sorted deterministically by
+    distance -> elevation -> angle.
+    """
+
+    expected_keys = set()
+
+    for distance in args.distances:
+        for elevation in args.elevations:
+            for angle in args.angles:
+
+                expected_keys.add(
+                    make_view_key(
+                        angle,
+                        distance,
+                        elevation,
+                    )
+                )
+
+    record_by_key = {}
+
+    for record in records:
+
+        try:
+
+            key = make_view_key(
+                record[
+                    "angle_deg"
+                ],
+                record[
+                    "distance_m"
+                ],
+                record[
+                    "elevation_deg"
+                ],
+            )
+
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+        ):
+
+            continue
+
+        record_by_key[
+            key
+        ] = record
+
+    actual_keys = set(
+        record_by_key.keys()
+    )
+
+    missing_keys = sorted(
+        expected_keys
+        -
+        actual_keys
+    )
+
+    extra_keys = sorted(
+        actual_keys
+        -
+        expected_keys
+    )
+
+    missing_files = []
+
+    for (
+        angle,
+        distance,
+        elevation
+    ) in sorted(
+        expected_keys
+    ):
+
+        paths = expected_view_paths(
+            output_dir=output_dir,
+            angle=angle,
+            distance=distance,
+            elevation=elevation,
+        )
+
+        for kind, path in paths.items():
+
+            if not file_is_nonempty(
+                path
+            ):
+
+                missing_files.append(
+                    (
+                        angle,
+                        distance,
+                        elevation,
+                        kind,
+                        str(path),
+                    )
+                )
+
+    print()
+    print("=" * 80)
+    print(
+        "[GrabCutBank] FINAL DATASET VALIDATION"
+    )
+    print("=" * 80)
+
+    print(
+        "[GrabCutBank] expected views:",
+        len(
+            expected_keys
+        ),
+    )
+
+    print(
+        "[GrabCutBank] completed views:",
+        len(
+            actual_keys
+        ),
+    )
+
+    print(
+        "[GrabCutBank] missing views:",
+        len(
+            missing_keys
+        ),
+    )
+
+    print(
+        "[GrabCutBank] extra views:",
+        len(
+            extra_keys
+        ),
+    )
+
+    print(
+        "[GrabCutBank] missing files:",
+        len(
+            missing_files
+        ),
+    )
+
+    if missing_keys:
+
+        print(
+            "[GrabCutBank] first missing views:",
+            missing_keys[
+                :20
+            ],
+        )
+
+    if missing_files:
+
+        print(
+            "[GrabCutBank] first missing files:"
+        )
+
+        for item in missing_files[
+            :20
+        ]:
+
+            print(
+                "   ",
+                item,
+            )
+
+    if (
+        missing_keys
+        or
+        extra_keys
+        or
+        missing_files
+    ):
+
+        raise RuntimeError(
+            "Sprite dataset validation failed. "
+            "Run the same command again with --resume."
+        )
+
+    sorted_records = sorted(
+        record_by_key.values(),
+        key=lambda row: (
+            float(
+                row[
+                    "distance_m"
+                ]
+            ),
+            float(
+                row[
+                    "elevation_deg"
+                ]
+            ),
+            int(
+                float(
+                    row[
+                        "angle_deg"
+                    ]
+                )
+            ),
+        ),
+    )
+
+    print(
+        "[GrabCutBank] DATASET VALIDATION PASSED"
+    )
+    print("=" * 80)
+
+    return sorted_records
 
 def make_contact_sheet(
     output_dir,
@@ -1770,6 +2761,24 @@ def main():
                 360
             )
         )
+    random.seed(
+        args.seed
+    )
+
+    np.random.seed(
+        args.seed
+    )
+
+    cv2.setRNGSeed(
+        int(
+            args.seed
+        )
+    )
+
+    print(
+        "[GrabCutBank] RNG seed:",
+        args.seed,
+    )
     output_dir = (
         Path(
             args.output_root
@@ -1822,6 +2831,13 @@ def main():
         /
         "view_matrix.csv"
     )
+    (
+        generation_config_path,
+        generation_config,
+    ) = initialize_or_validate_generation_config(
+        output_dir=output_dir,
+        args=args,
+    )
 
     records = []
     completed_keys = set()
@@ -1832,7 +2848,8 @@ def main():
             records,
             completed_keys,
         ) = load_checkpoint_records(
-            csv_path
+            csv_path=csv_path,
+            output_dir=output_dir,
         )
 
         print(
@@ -1865,7 +2882,17 @@ def main():
         original_settings = (
             world.get_settings()
         )
-
+        validate_runtime_environment(
+            config_path=(
+                generation_config_path
+            ),
+            config_document=(
+                generation_config
+            ),
+            client=client,
+            world=world,
+            args=args,
+        )
         print()
         print("=" * 80)
         print(
@@ -1902,7 +2929,16 @@ def main():
             world,
             args.fixed_delta_seconds,
         )
+        world.set_weather(
+            carla.WeatherParameters.ClearNoon
+        )
 
+        for _ in range(2):
+            world.tick()
+
+        print(
+            "[GrabCutBank] weather: ClearNoon"
+        )
         # Remove any vehicles / walkers / sensors left by an earlier run.
         gen.clear_existing_dynamic_actors(
             world
@@ -1925,7 +2961,56 @@ def main():
                 args,
             )
         )
+        if (
+            str(
+                actual_bp
+            )
+            !=
+            str(
+                args.vehicle_blueprint
+            )
+        ):
 
+            raise RuntimeError(
+                "Wrong vehicle blueprint spawned.\n"
+                f"Requested: {args.vehicle_blueprint}\n"
+                f"Actual   : {actual_bp}"
+            )
+
+        actual_color = (
+            vehicle.attributes.get(
+                "color",
+                None,
+            )
+        )
+
+        print(
+            "[GrabCutBank] vehicle blueprint:",
+            actual_bp,
+        )
+
+        print(
+            "[GrabCutBank] vehicle color:",
+            actual_color,
+        )
+
+        if (
+            actual_color is not None
+            and
+            str(
+                actual_color
+            )
+            !=
+            str(
+                args.color
+            )
+        ):
+
+            raise RuntimeError(
+                "Vehicle color does not match requested color.\n"
+                f"Requested: {args.color}\n"
+                f"Actual   : {actual_color}"
+            )
         vehicle.set_simulate_physics(
             False
         )
@@ -2236,7 +3321,32 @@ def main():
                         )
 
                         continue
+                    view_rng_seed = (
+                        make_view_rng_seed(
+                            base_seed=(
+                                args.seed
+                            ),
+                            angle=angle,
+                            distance=(
+                                distance_m
+                            ),
+                            elevation=(
+                                elevation_deg
+                            ),
+                        )
+                    )
 
+                    random.seed(
+                        view_rng_seed
+                    )
+
+                    np.random.seed(
+                        view_rng_seed
+                    )
+
+                    cv2.setRNGSeed(
+                        view_rng_seed
+                    )
                     (
                         alpha,
                         body_mask,
@@ -2322,14 +3432,20 @@ def main():
                         f"{stem}_debug.png"
                     )
 
-                    gen.save_rgba(
-                        rgba_path,
-                        rgba,
+                    atomic_save_image(
+                        save_function=(
+                            gen.save_rgba
+                        ),
+                        path=rgba_path,
+                        image=rgba,
                     )
 
-                    gen.save_mask(
-                        mask_path,
-                        crop_alpha,
+                    atomic_save_image(
+                        save_function=(
+                            gen.save_mask
+                        ),
+                        path=mask_path,
+                        image=crop_alpha,
                     )
 
                     debug = gen.draw_debug(
@@ -2342,9 +3458,12 @@ def main():
                         yaw=yaw,
                     )
 
-                    gen.save_rgb(
-                        debug_path,
-                        debug,
+                    atomic_save_image(
+                        save_function=(
+                            gen.save_rgb
+                        ),
+                        path=debug_path,
+                        image=debug,
                     )
 
                     alpha_pixels = int(
@@ -2354,6 +3473,7 @@ def main():
                     )
 
                     record = {
+
                         "angle_deg":
                             angle,
 
@@ -2371,7 +3491,10 @@ def main():
                             float(
                                 args.capture_altitude
                             ),
-
+                        "rng_seed":
+                            int(
+                                view_rng_seed
+                            ),
                         "sprite_width_px":
                             int(
                                 rgba.shape[
@@ -2441,29 +3564,18 @@ def main():
 
 
 
+        records = validate_completed_dataset(
+            output_dir=output_dir,
+            records=records,
+            args=args,
+        )
+
         if records:
 
-            with open(
-                csv_path,
-                "w",
-                newline="",
-                encoding="utf-8",
-            ) as f:
-
-                writer = csv.DictWriter(
-                    f,
-                    fieldnames=list(
-                        records[
-                            0
-                        ].keys()
-                    ),
-                )
-
-                writer.writeheader()
-
-                writer.writerows(
-                    records
-                )
+            atomic_write_records_csv(
+                csv_path=csv_path,
+                records=records,
+            )
             if not args.skip_contact_sheets:
                 for angle in args.angles:
 
