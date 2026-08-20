@@ -96,7 +96,12 @@ def parse_args():
     parser.add_argument("--fixed-delta-seconds", type=float, default=0.05)
     parser.add_argument("--settle-ticks", type=int, default=2)
 
-    parser.add_argument("--vehicle-semantic-tag", type=int, default=10)
+    parser.add_argument(
+        "--vehicle-semantic-tag",
+        type=int,
+        default=14,
+        help="CARLA semantic tag for Car in CARLA 0.9.15."
+    )
 
     parser.add_argument(
         "--window-mode",
@@ -130,13 +135,154 @@ def parse_args():
         action="store_true",
         help="Save debug for every angle. Otherwise every 30 degrees."
     )
-
+    parser.add_argument(
+        "--road-only-scene",
+        action="store_true",
+        help=(
+            "Temporarily unload optional Town*_Opt map layers "
+            "during sprite capture so the target vehicle cannot "
+            "be occluded by buildings, foliage, props, parked "
+            "vehicles, street lights, or walls."
+        )
+    )
     return parser.parse_args()
 
 
 # ============================================================
 # Utilities
 # ============================================================
+def get_sprite_capture_layers():
+    """
+    Optional CARLA map layers that should not be visible while
+    generating isolated vehicle sprites.
+
+    IMPORTANT:
+    Ground is intentionally NOT removed because it contains the
+    road/ground surface we want to preserve.
+    """
+
+    names = [
+        "Buildings",
+        "Decals",
+        "Foliage",
+        "ParkedVehicles",
+        "Particles",
+        "Props",
+        "StreetLights",
+        "Walls",
+    ]
+
+    layers = []
+
+    for name in names:
+
+        if hasattr(
+            carla.MapLayer,
+            name
+        ):
+            layers.append(
+                (
+                    name,
+                    getattr(
+                        carla.MapLayer,
+                        name
+                    ),
+                )
+            )
+
+    return layers
+
+
+def unload_sprite_capture_layers(
+    world,
+):
+    """
+    Hide non-road optional layers in an optimized CARLA map.
+
+    Intended for Town*_Opt maps.
+    """
+
+    unloaded = []
+
+    print()
+    print(
+        "[RGBABank] Enabling road-only capture scene..."
+    )
+
+    for (
+        name,
+        layer,
+    ) in get_sprite_capture_layers():
+
+        try:
+
+            world.unload_map_layer(
+                layer
+            )
+
+            unloaded.append(
+                (
+                    name,
+                    layer,
+                )
+            )
+
+            print(
+                f"[RGBABank] unloaded layer: {name}"
+            )
+
+        except Exception as e:
+
+            print(
+                f"[RGBABank] could not unload {name}: {e}"
+            )
+
+    # Give CARLA time to process layer changes.
+    for _ in range(5):
+        world.tick()
+
+    return unloaded
+
+
+def restore_sprite_capture_layers(
+    world,
+    unloaded_layers,
+):
+    """
+    Restore layers removed for sprite generation.
+    """
+
+    if not unloaded_layers:
+        return
+
+    print()
+    print(
+        "[RGBABank] Restoring map layers..."
+    )
+
+    for (
+        name,
+        layer,
+    ) in unloaded_layers:
+
+        try:
+
+            world.load_map_layer(
+                layer
+            )
+
+            print(
+                f"[RGBABank] restored layer: {name}"
+            )
+
+        except Exception as e:
+
+            print(
+                f"[RGBABank] could not restore {name}: {e}"
+            )
+
+    for _ in range(5):
+        world.tick()
 
 def make_grabcut_alpha_from_bbox(rgb, bbox, args):
     """
@@ -884,7 +1030,7 @@ def main():
 
     rgb_queue = queue.Queue()
     seg_queue = queue.Queue()
-
+    unloaded_map_layers = []
     metadata_rows = []
     contact_rgba_paths = []
     contact_debug_paths = []
@@ -901,7 +1047,13 @@ def main():
         print("[RGBABank] Current map:", world.get_map().name)
 
         setup_synchronous_mode(world, args.fixed_delta_seconds)
+        if args.road_only_scene:
 
+            unloaded_map_layers = (
+                unload_sprite_capture_layers(
+                    world
+                )
+            )
         if not args.no_clear_existing_actors:
             clear_existing_dynamic_actors(world)
 
@@ -1192,7 +1344,16 @@ def main():
 
         for actor in actors:
             safe_destroy(actor)
+        if unloaded_map_layers:
 
+            print(
+                "[RGBABank] Map layers left unloaded intentionally."
+            )
+
+            print(
+                "[RGBABank] Restart CARLA after sprite generation "
+                "to restore the normal map."
+            )
         restore_world_settings(world, original_settings)
 
         print("[RGBABank] Done cleanup.")
