@@ -1,0 +1,51 @@
+{
+  "schema_version": "he_geometry_calibration_v1",
+  "source_primary": "recordings\\geometry_calibration_grid_v1_clean\\analysis_v1\\pose_medians.csv",
+  "source_opposite": "recordings\\geometry_calibration_grid_v1_opposite\\analysis_v1\\pose_medians.csv",
+  "output_npz": "assets\\geometry_calibration\\tesla_geometry_calibration_v1.npz",
+  "distance_values_m": [
+    10.0,
+    15.0,
+    20.0,
+    30.0,
+    40.0
+  ],
+  "angle_values_deg": [
+    0.0,
+    15.0,
+    30.0,
+    45.0,
+    60.0,
+    90.0,
+    120.0,
+    150.0,
+    180.0,
+    210.0,
+    240.0,
+    270.0,
+    300.0,
+    315.0,
+    330.0,
+    345.0
+  ],
+  "shape": [
+    5,
+    16
+  ],
+  "knot_count": 80,
+  "interpolation_plan": {
+    "distance": "linear_clamped",
+    "viewpoint": "linear_circular"
+  },
+  "corrections": {
+    "box_width": "multiply by width_scale",
+    "box_height": "multiply by height_scale",
+    "bottom_y": "add bottom_offset_px",
+    "cx": "add cx_offset_px"
+  },
+  "notes": [
+    "Calibration is applied after HEPlacement and before rendering.",
+    "Renderer and sprite bank are not modified by this calibration.",
+    "Distance outside 10..40 m is clamped to the measured boundary."
+  ]
+}

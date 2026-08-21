@@ -507,7 +507,7 @@ def settle_ego_on_road(world, ego, settle_frames=30):
         f"yaw={settled_tf.rotation.yaw:.6f}, "
         f"roll={settled_tf.rotation.roll:.6f}"
     )
-
+    
     # From this point onward the pair recorder controls the pose itself.
     ego.set_simulate_physics(False)
     ego.set_transform(settled_tf)
@@ -536,12 +536,439 @@ def make_rgb_camera(world, ego, args):
     camera = world.spawn_actor(camera_bp, camera_tf, attach_to=ego)
     return camera
 
+def make_instance_camera(world, ego, args):
+    """
+    Instance-segmentation camera with exactly the same intrinsics
+    and mounting transform as the RGB camera.
+    """
+
+    camera_bp = get_blueprint(
+        world,
+        "sensor.camera.instance_segmentation",
+    )
+
+    camera_bp.set_attribute(
+        "image_size_x",
+        str(args.width),
+    )
+
+    camera_bp.set_attribute(
+        "image_size_y",
+        str(args.height),
+    )
+
+    camera_bp.set_attribute(
+        "fov",
+        str(args.fov),
+    )
+
+    camera_tf = carla.Transform(
+        carla.Location(
+            x=float(args.camera_x),
+            y=float(args.camera_y),
+            z=float(args.camera_z),
+        ),
+        carla.Rotation(
+            pitch=float(args.camera_pitch),
+            yaw=float(args.camera_yaw),
+            roll=float(args.camera_roll),
+        ),
+    )
+
+    camera = world.spawn_actor(
+        camera_bp,
+        camera_tf,
+        attach_to=ego,
+    )
+
+    return camera
 
 def image_to_rgb_array(image):
     array = np.frombuffer(image.raw_data, dtype=np.uint8)
     array = array.reshape((image.height, image.width, 4))
     rgb = array[:, :, :3][:, :, ::-1]  # BGRA -> RGB
     return rgb
+
+def decode_instance_segmentation(image):
+    """
+    Decode CARLA instance-segmentation raw BGRA image.
+
+    raw_data byte order:
+        B = channel 0
+        G = channel 1
+        R = channel 2
+
+    CARLA encoding:
+        R -> semantic class
+        G/B -> instance identifier
+    """
+
+    array = np.frombuffer(
+        image.raw_data,
+        dtype=np.uint8,
+    )
+
+    array = array.reshape(
+        (
+            image.height,
+            image.width,
+            4,
+        )
+    )
+
+    blue = array[:, :, 0].astype(
+        np.uint16
+    )
+
+    green = array[:, :, 1].astype(
+        np.uint16
+    )
+
+    red = array[:, :, 2].astype(
+        np.uint8
+    )
+
+    # IMPORTANT:
+    # CARLA raw BGRA means:
+    #
+    #   actor_id = G + (B << 8)
+    #
+    instance_id = (
+        green
+        + (blue << 8)
+    )
+
+    return (
+        red,
+        instance_id,
+    )
+
+
+def extract_vehicle_instance_mask(
+    instance_image,
+    projected_bbox,
+    semantic_tags,
+):
+    """
+    Extract the target CARLA actor instance from an instance-
+    segmentation image.
+
+    Important:
+    CARLA's segmentation instance ID is based on Unreal's internal
+    Actor.GetUniqueID(), not carla.Actor.id.
+
+    Therefore we identify the target by:
+      1. the actor's own semantic_tags,
+      2. its projected 2D bounding box,
+      3. the dominant instance ID inside that region.
+
+    This avoids hard-coding semantic label numbers.
+    """
+
+    semantic_id, instance_id = (
+        decode_instance_segmentation(
+            instance_image
+        )
+    )
+
+    height, width = (
+        semantic_id.shape
+    )
+
+    target_semantic_tags = {
+        int(tag)
+        for tag in semantic_tags
+    }
+
+    if not target_semantic_tags:
+        return (
+            np.zeros(
+                (height, width),
+                dtype=np.uint8,
+            ),
+            {
+                "found":
+                    False,
+
+                "reason":
+                    "actor_has_no_semantic_tags",
+            },
+        )
+
+    if not projected_bbox.get(
+        "visible",
+        False,
+    ):
+        return (
+            np.zeros(
+                (height, width),
+                dtype=np.uint8,
+            ),
+            {
+                "found":
+                    False,
+
+                "reason":
+                    "projected_bbox_not_visible",
+
+                "expected_semantic_tags":
+                    sorted(
+                        target_semantic_tags
+                    ),
+            },
+        )
+
+    x1 = max(
+        0,
+        int(
+            math.floor(
+                projected_bbox["x1"]
+            )
+        ),
+    )
+
+    y1 = max(
+        0,
+        int(
+            math.floor(
+                projected_bbox["y1"]
+            )
+        ),
+    )
+
+    x2 = min(
+        width,
+        int(
+            math.ceil(
+                projected_bbox["x2"]
+            )
+        ) + 1,
+    )
+
+    y2 = min(
+        height,
+        int(
+            math.ceil(
+                projected_bbox["y2"]
+            )
+        ) + 1,
+    )
+
+    if (
+        x2 <= x1
+        or y2 <= y1
+    ):
+        return (
+            np.zeros(
+                (height, width),
+                dtype=np.uint8,
+            ),
+            {
+                "found":
+                    False,
+
+                "reason":
+                    "empty_bbox_crop",
+
+                "expected_semantic_tags":
+                    sorted(
+                        target_semantic_tags
+                    ),
+            },
+        )
+
+    crop_semantic = semantic_id[
+        y1:y2,
+        x1:x2,
+    ]
+
+    crop_instances = instance_id[
+        y1:y2,
+        x1:x2,
+    ]
+
+    # Pixels belonging to the same semantic class/classes as
+    # the actual spawned adversary actor.
+    semantic_match = np.isin(
+        crop_semantic,
+        list(
+            target_semantic_tags
+        ),
+    )
+
+    candidate_ids = crop_instances[
+        semantic_match
+    ]
+
+    # Zero means no useful encoded instance.
+    candidate_ids = candidate_ids[
+        candidate_ids != 0
+    ]
+
+    if candidate_ids.size == 0:
+
+        semantic_values, semantic_counts = np.unique(
+            crop_semantic,
+            return_counts=True,
+        )
+
+        semantic_histogram = sorted(
+            [
+                (
+                    int(v),
+                    int(c),
+                )
+                for v, c in zip(
+                    semantic_values,
+                    semantic_counts,
+                )
+            ],
+            key=lambda x: x[1],
+            reverse=True,
+        )[:10]
+
+        return (
+            np.zeros(
+                (height, width),
+                dtype=np.uint8,
+            ),
+            {
+                "found":
+                    False,
+
+                "reason":
+                    "no_matching_semantic_instance_in_bbox",
+
+                "expected_semantic_tags":
+                    sorted(
+                        target_semantic_tags
+                    ),
+
+                "semantic_histogram_in_bbox":
+                    semantic_histogram,
+
+                "bbox_crop":
+                    {
+                        "x1": x1,
+                        "y1": y1,
+                        "x2": x2,
+                        "y2": y2,
+                    },
+            },
+        )
+
+    unique_ids, counts = np.unique(
+        candidate_ids,
+        return_counts=True,
+    )
+
+    best_index = int(
+        np.argmax(
+            counts
+        )
+    )
+
+    selected_instance_id = int(
+        unique_ids[
+            best_index
+        ]
+    )
+
+    selected_pixels_in_bbox = int(
+        counts[
+            best_index
+        ]
+    )
+
+    # Full-image semantic match.
+    full_semantic_match = np.isin(
+        semantic_id,
+        list(
+            target_semantic_tags
+        ),
+    )
+
+    # Recover that selected instance across the complete image.
+    mask_bool = (
+        full_semantic_match
+        &
+        (
+            instance_id
+            == selected_instance_id
+        )
+    )
+
+    mask_pixel_count = int(
+        np.count_nonzero(
+            mask_bool
+        )
+    )
+
+    mask = (
+        mask_bool.astype(
+            np.uint8
+        )
+        * 255
+    )
+
+    if mask_pixel_count > 0:
+
+        ys, xs = np.where(
+            mask_bool
+        )
+
+        mask_bbox = {
+            "x1":
+                int(xs.min()),
+
+            "y1":
+                int(ys.min()),
+
+            "x2":
+                int(xs.max()),
+
+            "y2":
+                int(ys.max()),
+        }
+
+    else:
+        mask_bbox = None
+
+    return (
+        mask,
+        {
+            "found":
+                True,
+
+            "method":
+                "semantic_tag_plus_projected_bbox",
+
+            "expected_semantic_tags":
+                sorted(
+                    target_semantic_tags
+                ),
+
+            "selected_instance_id":
+                selected_instance_id,
+
+            "pixels_in_projected_bbox":
+                selected_pixels_in_bbox,
+
+            "mask_pixels":
+                mask_pixel_count,
+
+            "mask_bbox":
+                mask_bbox,
+
+            "bbox_crop":
+                {
+                    "x1": x1,
+                    "y1": y1,
+                    "x2": x2,
+                    "y2": y2,
+                },
+        },
+    )
 
 def get_image_for_carla_frame(image_queue, target_frame, timeout=5.0):
     """
@@ -589,7 +1016,27 @@ def run(args):
         ego_pose_path = pair_dir / "real_ego_pose.jsonl"
         adv_pose_path = pair_dir / "real_adversary_pose.jsonl"
         bbox_path = pair_dir / "real_bbox.jsonl"
+    instance_mask_dir = None
+    instance_mask_meta_path = None
 
+    if (
+        args.mode == "real_adversary"
+        and args.save_instance_masks
+    ):
+        instance_mask_dir = (
+            pair_dir
+            / "real_instance_masks"
+        )
+
+        instance_mask_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        instance_mask_meta_path = (
+            pair_dir
+            / "real_instance_mask_metadata.jsonl"
+        )
     client = carla.Client(args.host, args.port)
     client.set_timeout(20.0)
 
@@ -598,9 +1045,14 @@ def run(args):
 
     actors = []
     writer = None
+
     ego_pose_file = None
     adv_pose_file = None
     bbox_file = None
+
+    instance_camera = None
+    instance_queue = None
+    instance_mask_meta_file = None
 
     try:
         world = setup_world(client, args.town, args.fps)
@@ -641,7 +1093,32 @@ def run(args):
 
         image_queue = queue.Queue()
         camera.listen(image_queue.put)
+        # ------------------------------------------------------------
+        # Optional CARLA instance-segmentation sensor.
+        #
+        # It uses exactly the same camera pose/intrinsics as RGB so that
+        # CARLA RGB, projected bbox and instance mask are pixel aligned.
+        # ------------------------------------------------------------
 
+        if (
+            args.mode == "real_adversary"
+            and args.save_instance_masks
+        ):
+            instance_camera = make_instance_camera(
+                world,
+                ego,
+                args,
+            )
+
+            actors.append(
+                instance_camera
+            )
+
+            instance_queue = queue.Queue()
+
+            instance_camera.listen(
+                instance_queue.put
+            )
         adversary = None
         if args.mode == "real_adversary":
             adv_state0 = adversary_local_state_at_time(args, 0.0)
@@ -659,7 +1136,15 @@ def run(args):
             adversary = spawn_actor_safe(world, adv_bp, adv_tf0)
             adversary.set_simulate_physics(False)
             actors.append(adversary)
+            print(
+                "[INFO] Adversary actor ID:",
+                adversary.id,
+            )
 
+            print(
+                "[INFO] Adversary semantic tags:",
+                list(adversary.semantic_tags),
+            )
         ego_poses = generate_scripted_ego_poses(
             spawn_tf=ego0_tf,
             frames=args.frames,
@@ -689,18 +1174,34 @@ def run(args):
 
         if bbox_path is not None:
             bbox_file = open(bbox_path, "w", encoding="utf-8")
-
+        if instance_mask_meta_path is not None:
+            instance_mask_meta_file = open(
+                instance_mask_meta_path,
+                "w",
+                encoding="utf-8",
+            )
         print("[INFO] Pair dir:", pair_dir)
         print("[INFO] Mode:", args.mode)
         print("[INFO] Video:", video_path)
         print("[INFO] Ego pose:", ego_pose_path)
+        if instance_mask_dir is not None:
+            print(
+                "[INFO] Instance masks:",
+                instance_mask_dir,
+            )
+
+        if instance_mask_meta_path is not None:
+            print(
+                "[INFO] Instance metadata:",
+                instance_mask_meta_path,
+            )
         if adv_pose_path:
             print("[INFO] Adversary pose:", adv_pose_path)
         if bbox_path:
             print("[INFO] Real bbox:", bbox_path)
 
-        # Warmup.
         for _ in range(args.warmup_frames):
+
             warmup_frame = world.tick()
 
             try:
@@ -711,6 +1212,16 @@ def run(args):
                 )
             except queue.Empty:
                 pass
+
+            if instance_queue is not None:
+                try:
+                    get_image_for_carla_frame(
+                        instance_queue,
+                        target_frame=warmup_frame,
+                        timeout=2.0,
+                    )
+                except queue.Empty:
+                    pass
 
         for frame_idx in range(args.frames):
             t_s = float(frame_idx) / float(args.fps)
@@ -739,6 +1250,15 @@ def run(args):
                 target_frame=carla_frame,
                 timeout=5.0,
             )
+            
+            instance_image = None
+
+            if instance_queue is not None:
+                instance_image = get_image_for_carla_frame(
+                    instance_queue,
+                    target_frame=carla_frame,
+                    timeout=5.0,
+                )
             rgb = image_to_rgb_array(image)
             bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
             writer.write(bgr)
@@ -798,7 +1318,92 @@ def run(args):
                     "bbox": bbox,
                 }
                 bbox_file.write(json.dumps(bbox_record) + "\n")
+                # ------------------------------------------------------------
+                # Exact adversary instance mask
+                # ------------------------------------------------------------
 
+                if (
+                    instance_image is not None
+                    and instance_mask_dir is not None
+                    and instance_mask_meta_file is not None
+                ):
+
+                    if int(instance_image.frame) != int(image.frame):
+                        raise RuntimeError(
+                            "RGB/instance frame mismatch: "
+                            f"rgb={image.frame}, "
+                            f"instance={instance_image.frame}"
+                        )
+
+                    instance_mask, mask_info = (
+                        extract_vehicle_instance_mask(
+                            instance_image=instance_image,
+                            projected_bbox=bbox,
+                            semantic_tags=adversary.semantic_tags,
+                        )
+                    )
+
+                    mask_filename = (
+                        f"frame_{frame_idx:06d}_mask.png"
+                    )
+
+                    mask_path = (
+                        instance_mask_dir
+                        / mask_filename
+                    )
+
+                    ok = cv2.imwrite(
+                        str(mask_path),
+                        instance_mask,
+                    )
+
+                    if not ok:
+                        raise RuntimeError(
+                            f"Could not write instance mask: "
+                            f"{mask_path}"
+                        )
+
+                    mask_record = {
+                        "recorded_frame_idx":
+                            int(frame_idx),
+
+                        "carla_frame":
+                            int(image.frame),
+
+                        "instance_sensor_frame":
+                            int(instance_image.frame),
+
+                        "t_s":
+                            float(t_s),
+
+                        "adversary_id":
+                            "adv_001",
+                        "carla_actor_id":
+                            int(adversary.id),
+                        "carla_actor_semantic_tags":
+                        [
+                            int(tag)
+                            for tag in adversary.semantic_tags
+                        ],
+                        "mask_path":
+                            str(
+                                mask_path
+                            ).replace("\\", "/"),
+
+                        "mask_info":
+                            mask_info,
+
+                        "projected_bbox":
+                            bbox,
+                    }
+
+                    instance_mask_meta_file.write(
+                        json.dumps(
+                            mask_record
+                        )
+                        + "\n"
+                    )
+                    
             if frame_idx % 30 == 0:
                 print(f"[INFO] frame {frame_idx}/{args.frames}")
 
@@ -816,7 +1421,8 @@ def run(args):
 
         if bbox_file is not None:
             bbox_file.close()
-
+        if instance_mask_meta_file is not None:
+            instance_mask_meta_file.close()            
         for actor in reversed(actors):
             try:
                 actor.destroy()
@@ -908,6 +1514,14 @@ def parse_args():
         "--cross-duration-s",
         type=float,
         default=4.0,
+    )
+    parser.add_argument(
+        "--save-instance-masks",
+        action="store_true",
+        help=(
+            "Record CARLA adversary instance-segmentation "
+            "masks for real_adversary mode."
+        ),
     )
     return parser.parse_args()
 

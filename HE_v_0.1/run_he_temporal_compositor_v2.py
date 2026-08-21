@@ -30,6 +30,7 @@ import math
 import shutil
 from pathlib import Path
 from heplacement_npz_lookup_adapter import HEPlacementNPZLookupAdapter
+from he_geometry_calibration_v1 import HEGeometryCalibrationV1
 import cv2
 import numpy as np
 
@@ -1499,6 +1500,105 @@ def nearest_linear_value(
         ),
     )
 
+def nearest_view_distance(
+    query_distance_m,
+    available_distances,
+    mode="linear",
+):
+    """
+    Choose a captured view-matrix distance.
+
+    Modes
+    -----
+    linear:
+        nearest physical distance |d - d_i|
+
+    log:
+        nearest multiplicative distance in log(d)
+
+    inverse_depth:
+        nearest perspective coordinate |1/d - 1/d_i|
+
+    The default remains 'linear' for backwards compatibility.
+    """
+
+    query_distance_m = float(
+        query_distance_m
+    )
+
+    distances = [
+        float(v)
+        for v in available_distances
+    ]
+
+    if not distances:
+        raise ValueError(
+            "available_distances is empty"
+        )
+
+    if mode == "linear":
+
+        return min(
+            distances,
+            key=lambda value:
+                abs(
+                    query_distance_m
+                    - value
+                ),
+        )
+
+    if mode == "log":
+
+        if query_distance_m <= 0:
+            raise ValueError(
+                "log distance selection requires "
+                "query_distance_m > 0"
+            )
+
+        return min(
+            distances,
+            key=lambda value:
+                abs(
+                    math.log(
+                        query_distance_m
+                    )
+                    -
+                    math.log(
+                        value
+                    )
+                ),
+        )
+
+    if mode == "inverse_depth":
+
+        if query_distance_m <= 0:
+            raise ValueError(
+                "inverse-depth selection requires "
+                "query_distance_m > 0"
+            )
+
+        query_inverse_depth = (
+            1.0
+            / query_distance_m
+        )
+
+        return min(
+            distances,
+            key=lambda value:
+                abs(
+                    query_inverse_depth
+                    -
+                    (
+                        1.0
+                        / value
+                    )
+                ),
+        )
+
+    raise ValueError(
+        "Unsupported distance_selection_mode: "
+        f"{mode}"
+    )
 
 def load_view_matrix_sprite_bank(sprite_bank):
     """
@@ -1908,9 +2008,24 @@ def select_view_matrix_sprite(
             ),
     )
 
-    selected_distance = nearest_linear_value(
-        query["distance_m"],
-        view_matrix["distances"],
+    distance_selection_mode = (
+        sprite_bank.get(
+            "distance_selection_mode",
+            "linear",
+        )
+    )
+
+    selected_distance = (
+        nearest_view_distance(
+            query_distance_m=
+                query["distance_m"],
+
+            available_distances=
+                view_matrix["distances"],
+
+            mode=
+                distance_selection_mode,
+        )
     )
 
     selected_elevation = nearest_linear_value(
@@ -1972,7 +2087,10 @@ def select_view_matrix_sprite(
             float(
                 selected_distance
             ),
-
+        "distance_selection_mode":
+            str(
+                distance_selection_mode
+            ),
         "distance_error_m":
             float(
                 abs(
@@ -2312,7 +2430,745 @@ def resize_view_matrix_sprite_to_box(
         resized,
         resize_info,
     )
+def warp_view_matrix_sprite_to_box_subpixel(
+    sprite_rgba,
+    frame_w,
+    frame_h,
+    target_cx,
+    target_bottom_y,
+    target_box_w,
+    target_box_h,
+    anchor_x,
+    anchor_y,
+    alpha_threshold=10,
+):
+    """
+    Stable subpixel view-matrix renderer.
 
+    Design invariant
+    ----------------
+    HEPlacement is the ONLY source of final image-space geometry:
+
+        target_cx
+        target_bottom_y
+        target_box_w
+        target_box_h
+
+    The source sprite determines appearance only.
+
+    Rendering uses:
+      1. Exact continuous source -> target scale.
+      2. INTER_AREA coarse prefilter for strong minification.
+      3. A small residual affine transform for exact fractional scale
+         and subpixel translation.
+
+    IMPORTANT:
+      - No post-raster alpha bbox is measured.
+      - No raster measurement feeds back into scale.
+      - No temporal smoothing.
+      - No CARLA information.
+      - No neighboring sprite blending.
+      - No assumption that the actor is approaching or receding.
+
+    Therefore this path can also be used later with reconstructed
+    real-world dashcam scenarios.
+    """
+
+    # ============================================================
+    # 1. Source geometry
+    # ============================================================
+
+    visible_bbox = get_visible_alpha_bbox(
+        sprite_rgba=sprite_rgba,
+        alpha_threshold=alpha_threshold,
+    )
+
+    visible_w = max(
+        1,
+        int(
+            visible_bbox["width"]
+        ),
+    )
+
+    visible_h = max(
+        1,
+        int(
+            visible_bbox["height"]
+        ),
+    )
+
+    target_w = max(
+        1.0,
+        float(target_box_w),
+    )
+
+    target_h = max(
+        1.0,
+        float(target_box_h),
+    )
+
+    source_h, source_w = (
+        sprite_rgba.shape[:2]
+    )
+
+    # ============================================================
+    # 2. Exact continuous geometry
+    #
+    # These are authoritative.
+    # Nothing later is allowed to change them.
+    # ============================================================
+
+    exact_scale_x = (
+        target_w
+        /
+        float(visible_w)
+    )
+
+    exact_scale_y = (
+        target_h
+        /
+        float(visible_h)
+    )
+
+    exact_float_x1 = (
+        float(target_cx)
+        -
+        float(anchor_x)
+        *
+        exact_scale_x
+    )
+
+    exact_float_y1 = (
+        float(target_bottom_y)
+        -
+        float(anchor_y)
+        *
+        exact_scale_y
+    )
+
+    exact_float_x2 = (
+        exact_float_x1
+        +
+        float(source_w)
+        *
+        exact_scale_x
+    )
+
+    exact_float_y2 = (
+        exact_float_y1
+        +
+        float(source_h)
+        *
+        exact_scale_y
+    )
+
+    # ============================================================
+    # 3. Coarse high-quality resize
+    #
+    # This is ONLY a numerical filtering stage.
+    #
+    # Importantly:
+    #   coarse dimensions are derived directly from exact geometry.
+    #
+    # We never measure the resulting raster and modify geometry.
+    # ============================================================
+
+    coarse_w = max(
+        1,
+        int(
+            round(
+                float(source_w)
+                *
+                exact_scale_x
+            )
+        ),
+    )
+
+    coarse_h = max(
+        1,
+        int(
+            round(
+                float(source_h)
+                *
+                exact_scale_y
+            )
+        ),
+    )
+
+    coarse_scale_x = (
+        float(coarse_w)
+        /
+        float(source_w)
+    )
+
+    coarse_scale_y = (
+        float(coarse_h)
+        /
+        float(source_h)
+    )
+
+    # ------------------------------------------------------------
+    # Premultiply before filtering.
+    # ------------------------------------------------------------
+
+    source_rgb = (
+        sprite_rgba[:, :, :3]
+        .astype(np.float32)
+        /
+        255.0
+    )
+
+    source_alpha = (
+        sprite_rgba[:, :, 3]
+        .astype(np.float32)
+        /
+        255.0
+    )
+
+    source_premul = (
+        source_rgb
+        *
+        source_alpha[:, :, None]
+    )
+
+    if (
+        exact_scale_x < 1.0
+        and
+        exact_scale_y < 1.0
+    ):
+        coarse_interp = (
+            cv2.INTER_AREA
+        )
+    else:
+        coarse_interp = (
+            cv2.INTER_LINEAR
+        )
+
+    coarse_premul = cv2.resize(
+        source_premul,
+        (
+            coarse_w,
+            coarse_h,
+        ),
+        interpolation=coarse_interp,
+    )
+
+    coarse_alpha = cv2.resize(
+        source_alpha,
+        (
+            coarse_w,
+            coarse_h,
+        ),
+        interpolation=coarse_interp,
+    )
+
+    coarse_alpha = np.clip(
+        coarse_alpha,
+        0.0,
+        1.0,
+    )
+
+    # ============================================================
+    # 4. Residual scale
+    #
+    # THIS is the important difference from our previous version.
+    #
+    # residual = exact requested scale / actual coarse scale
+    #
+    # It is NOT calculated from a thresholded raster bbox.
+    # ============================================================
+
+    residual_scale_x = (
+        exact_scale_x
+        /
+        coarse_scale_x
+    )
+
+    residual_scale_y = (
+        exact_scale_y
+        /
+        coarse_scale_y
+    )
+
+    # Coarse-raster anchor derived analytically from the source.
+    coarse_anchor_x = (
+        float(anchor_x)
+        *
+        coarse_scale_x
+    )
+
+    coarse_anchor_y = (
+        float(anchor_y)
+        *
+        coarse_scale_y
+    )
+
+    # ============================================================
+    # 5. Exact floating-point placement
+    #
+    # This should algebraically equal exact_float_x1/y1 above.
+    # ============================================================
+
+    float_x1 = (
+        float(target_cx)
+        -
+        coarse_anchor_x
+        *
+        residual_scale_x
+    )
+
+    float_y1 = (
+        float(target_bottom_y)
+        -
+        coarse_anchor_y
+        *
+        residual_scale_y
+    )
+
+    float_x2 = (
+        float_x1
+        +
+        float(coarse_w)
+        *
+        residual_scale_x
+    )
+
+    float_y2 = (
+        float_y1
+        +
+        float(coarse_h)
+        *
+        residual_scale_y
+    )
+
+    # ============================================================
+    # 6. Integer raster container
+    #
+    # Fractional location remains inside local_tx/local_ty.
+    # ============================================================
+
+    crop_x1 = int(
+        math.floor(
+            float_x1
+        )
+    )
+
+    crop_y1 = int(
+        math.floor(
+            float_y1
+        )
+    )
+
+    crop_x2 = int(
+        math.ceil(
+            float_x2
+        )
+    )
+
+    crop_y2 = int(
+        math.ceil(
+            float_y2
+        )
+    )
+
+    crop_w = max(
+        1,
+        crop_x2 - crop_x1,
+    )
+
+    crop_h = max(
+        1,
+        crop_y2 - crop_y1,
+    )
+
+    local_tx = (
+        float_x1
+        -
+        float(crop_x1)
+    )
+
+    local_ty = (
+        float_y1
+        -
+        float(crop_y1)
+    )
+
+    affine = np.array(
+        [
+            [
+                float(
+                    residual_scale_x
+                ),
+                0.0,
+                float(
+                    local_tx
+                ),
+            ],
+            [
+                0.0,
+                float(
+                    residual_scale_y
+                ),
+                float(
+                    local_ty
+                ),
+            ],
+        ],
+        dtype=np.float32,
+    )
+
+    # ============================================================
+    # 7. Small residual affine warp
+    # ============================================================
+
+    warped_premul = cv2.warpAffine(
+        coarse_premul,
+        affine,
+        (
+            crop_w,
+            crop_h,
+        ),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0,
+    )
+
+    warped_alpha = cv2.warpAffine(
+        coarse_alpha,
+        affine,
+        (
+            crop_w,
+            crop_h,
+        ),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0,
+    )
+
+    warped_alpha = np.clip(
+        warped_alpha,
+        0.0,
+        1.0,
+    )
+
+    # ============================================================
+    # 8. Convert premultiplied RGB back to straight RGBA
+    # ============================================================
+
+    warped_rgb = np.zeros_like(
+        warped_premul,
+        dtype=np.float32,
+    )
+
+    valid = (
+        warped_alpha
+        >
+        1e-6
+    )
+
+    warped_rgb[valid] = (
+        warped_premul[valid]
+        /
+        warped_alpha[
+            valid,
+            None,
+        ]
+    )
+
+    warped_rgb = np.clip(
+        warped_rgb,
+        0.0,
+        1.0,
+    )
+
+    warped_rgba = np.zeros(
+        (
+            crop_h,
+            crop_w,
+            4,
+        ),
+        dtype=np.uint8,
+    )
+
+    warped_rgba[:, :, :3] = (
+        np.rint(
+            warped_rgb
+            *
+            255.0
+        )
+        .astype(np.uint8)
+    )
+
+    warped_rgba[:, :, 3] = (
+        np.rint(
+            warped_alpha
+            *
+            255.0
+        )
+        .astype(np.uint8)
+    )
+
+    fully_outside_frame = (
+        crop_x2 <= 0
+        or
+        crop_y2 <= 0
+        or
+        crop_x1 >= int(frame_w)
+        or
+        crop_y1 >= int(frame_h)
+    )
+
+    # ============================================================
+    # 9. Numerical sanity checks
+    #
+    # These should be essentially zero.
+    # ============================================================
+
+    reconstructed_scale_x = (
+        coarse_scale_x
+        *
+        residual_scale_x
+    )
+
+    reconstructed_scale_y = (
+        coarse_scale_y
+        *
+        residual_scale_y
+    )
+
+    scale_error_x = (
+        reconstructed_scale_x
+        -
+        exact_scale_x
+    )
+
+    scale_error_y = (
+        reconstructed_scale_y
+        -
+        exact_scale_y
+    )
+
+    placement_error_x = (
+        float_x1
+        -
+        exact_float_x1
+    )
+
+    placement_error_y = (
+        float_y1
+        -
+        exact_float_y1
+    )
+
+    # ============================================================
+    # 10. Metadata
+    # ============================================================
+
+    resize_info = {
+        "mode":
+            "subpixel_affine_area_no_feedback",
+
+        "scale_x":
+            float(
+                exact_scale_x
+            ),
+
+        "scale_y":
+            float(
+                exact_scale_y
+            ),
+
+        # Compatibility.
+        "scale":
+            float(
+                exact_scale_y
+            ),
+
+        "source_width":
+            int(
+                source_w
+            ),
+
+        "source_height":
+            int(
+                source_h
+            ),
+
+        "visible_bbox":
+            visible_bbox,
+
+        "visible_width":
+            int(
+                visible_w
+            ),
+
+        "visible_height":
+            int(
+                visible_h
+            ),
+
+        "target_visible_width":
+            float(
+                target_w
+            ),
+
+        "target_visible_height":
+            float(
+                target_h
+            ),
+
+        "coarse_width":
+            int(
+                coarse_w
+            ),
+
+        "coarse_height":
+            int(
+                coarse_h
+            ),
+
+        "coarse_scale_x":
+            float(
+                coarse_scale_x
+            ),
+
+        "coarse_scale_y":
+            float(
+                coarse_scale_y
+            ),
+
+        "residual_scale_x":
+            float(
+                residual_scale_x
+            ),
+
+        "residual_scale_y":
+            float(
+                residual_scale_y
+            ),
+
+        "reconstructed_scale_x":
+            float(
+                reconstructed_scale_x
+            ),
+
+        "reconstructed_scale_y":
+            float(
+                reconstructed_scale_y
+            ),
+
+        "scale_error_x":
+            float(
+                scale_error_x
+            ),
+
+        "scale_error_y":
+            float(
+                scale_error_y
+            ),
+
+        "placement_error_x":
+            float(
+                placement_error_x
+            ),
+
+        "placement_error_y":
+            float(
+                placement_error_y
+            ),
+
+        "resized_width":
+            int(
+                crop_w
+            ),
+
+        "resized_height":
+            int(
+                crop_h
+            ),
+
+        "scaled_anchor_x":
+            float(target_cx)
+            -
+            float(crop_x1),
+
+        "scaled_anchor_y":
+            float(target_bottom_y)
+            -
+            float(crop_y1),
+
+        "float_x1":
+            float(
+                float_x1
+            ),
+
+        "float_y1":
+            float(
+                float_y1
+            ),
+
+        "float_x2":
+            float(
+                float_x2
+            ),
+
+        "float_y2":
+            float(
+                float_y2
+            ),
+
+        "local_tx":
+            float(
+                local_tx
+            ),
+
+        "local_ty":
+            float(
+                local_ty
+            ),
+
+        "fully_outside_frame":
+            bool(
+                fully_outside_frame
+            ),
+
+        "paste": {
+            "x1":
+                int(
+                    crop_x1
+                ),
+
+            "y1":
+                int(
+                    crop_y1
+                ),
+
+            "x2":
+                int(
+                    crop_x2
+                ),
+
+            "y2":
+                int(
+                    crop_y2
+                ),
+
+            "sprite_width":
+                int(
+                    crop_w
+                ),
+
+            "sprite_height":
+                int(
+                    crop_h
+                ),
+        },
+    }
+
+    return (
+        warped_rgba,
+        resize_info,
+    )
 # ============================================================
 # Compositor
 # ============================================================
@@ -2482,8 +3338,90 @@ def run_scenario(scenario, overwrite=False):
         "assets/placement_lookup/heplacement_v2_lookup_full_0_100_z05_yaw1.npz",
     )
 
-    placement_adapter = HEPlacementNPZLookupAdapter(lookup_path)
+    placement_adapter = HEPlacementNPZLookupAdapter(
+        lookup_path
+    )
+
+    # ============================================================
+    # Optional geometry calibration
+    #
+    # Architecture:
+    #
+    #   HEPlacement
+    #       ↓
+    #   HEGeometryCalibrationV1
+    #       ↓
+    #   sprite selection / compositor
+    #
+    # The renderer itself remains unchanged.
+    # ============================================================
+
+    geometry_calibration_cfg = scenario.get(
+        "geometry_calibration",
+        {},
+    )
+
+    geometry_calibration = None
+
+    if bool(
+        geometry_calibration_cfg.get(
+            "enabled",
+            False,
+        )
+    ):
+
+        calibration_type = (
+            geometry_calibration_cfg.get(
+                "type",
+                "he_geometry_calibration_v1",
+            )
+        )
+
+        if (
+            calibration_type
+            !=
+            "he_geometry_calibration_v1"
+        ):
+            raise ValueError(
+                "Unsupported geometry calibration type: "
+                f"{calibration_type}"
+            )
+
+        calibration_path = (
+            geometry_calibration_cfg.get(
+                "npz_path"
+            )
+        )
+
+        if not calibration_path:
+            raise ValueError(
+                "geometry_calibration.enabled=True "
+                "but npz_path is missing."
+            )
+
+        geometry_calibration = (
+            HEGeometryCalibrationV1(
+                calibration_path
+            )
+        )
+
+        print(
+            "[HEGeometryCalibration] enabled"
+        )
+
+        print(
+            "[HEGeometryCalibration] path:",
+            calibration_path,
+        )
+
+    else:
+
+        print(
+            "[HEGeometryCalibration] disabled"
+        )
+
     timeline = scenario["timeline"]
+
     start_frame = int(timeline["start_frame"])
     # In ego-pose-aware mode, "ego_initial" means ego pose at the
     # scenario start frame, not necessarily video frame 0.
@@ -2529,6 +3467,27 @@ def run_scenario(scenario, overwrite=False):
         )
     )
 
+    render_transform_mode = (
+        sprite_bank.get(
+            "render_transform_mode",
+            "integer_resize",
+        )
+    )
+
+    if render_transform_mode not in (
+        "integer_resize",
+        "subpixel_affine",
+    ):
+        raise ValueError(
+            "Unsupported render_transform_mode: "
+            f"{render_transform_mode}"
+        )
+
+    print(
+        "[HERender] transform mode:",
+        render_transform_mode,
+    )
+
     available_angles = None
     view_matrix = None
 
@@ -2571,8 +3530,31 @@ def run_scenario(scenario, overwrite=False):
         "total_frames": total_frames,
         "start_frame": start_frame,
         "end_frame": end_frame,
-        "sprite_bank_mode": sprite_bank_mode,
+        "sprite_bank_mode":
+            sprite_bank_mode,
 
+        "render_transform_mode":
+            render_transform_mode,
+
+        "geometry_calibration": {
+            "enabled":
+                bool(
+                    geometry_calibration
+                    is not None
+                ),
+
+            "type":
+                geometry_calibration_cfg.get(
+                    "type",
+                    None,
+                ),
+
+            "npz_path":
+                geometry_calibration_cfg.get(
+                    "npz_path",
+                    None,
+                ),
+        },
         "available_sprite_count": (
             len(view_matrix["records"])
             if view_matrix is not None
@@ -2722,6 +3704,75 @@ def run_scenario(scenario, overwrite=False):
                     scenario=scenario
                 )
 
+                # ====================================================
+                # HE Geometry Calibration V1
+                #
+                # Use the SAME continuous view-matrix coordinates used
+                # by sprite selection:
+                #
+                #   distance_m
+                #   viewpoint_angle_deg
+                #
+                # No selected sprite coordinates are involved.
+                # ====================================================
+
+                box_before_geometry_calibration = None
+                geometry_calibration_query = None
+
+                if (
+                    geometry_calibration
+                    is not None
+                    and
+                    box.get(
+                        "visible",
+                        False,
+                    )
+                ):
+
+                    box_before_geometry_calibration = dict(
+                        box
+                    )
+
+                    geometry_calibration_query = (
+                        compute_view_matrix_coordinates(
+                            state=state,
+
+                            target_height_m=float(
+                                sprite_bank.get(
+                                    "target_height_m",
+                                    0.75,
+                                )
+                            ),
+
+                            vertical_mode=
+                                sprite_bank.get(
+                                    "vertical_mode",
+                                    "state_y",
+                                ),
+
+                            camera_height_m=float(
+                                sprite_bank.get(
+                                    "camera_height_m",
+                                    1.60,
+                                )
+                            ),
+                        )
+                    )
+
+                    box = geometry_calibration.apply_box(
+                        box=box,
+
+                        distance_m=
+                            geometry_calibration_query[
+                                "distance_m"
+                            ],
+
+                        viewpoint_deg=
+                            geometry_calibration_query[
+                                "viewpoint_angle_deg"
+                            ],
+                    )
+
                 adv_meta = {
                     "id": adv["id"],
 
@@ -2735,10 +3786,44 @@ def run_scenario(scenario, overwrite=False):
                     # Full transform debug information.
                     "transform_debug": transform_debug,
 
-                    "coordinate_mode": scenario.get("coordinate_mode", {}),
-                    "box": box,
-                    "rendered": False,
-                    "placement_source": box.get("source", "geometric_projection")
+                    "coordinate_mode":
+                        scenario.get(
+                            "coordinate_mode",
+                            {},
+                        ),
+
+                    # Final geometry used by the renderer.
+                    "box":
+                        box,
+
+                    # Raw HEPlacement geometry before C(d, theta).
+                    "box_before_geometry_calibration":
+                        box_before_geometry_calibration,
+
+                    # Continuous coordinates used to query C(d, theta).
+                    "geometry_calibration_query":
+                        geometry_calibration_query,
+
+                    # Exact sampled correction and interpolation metadata.
+                    "geometry_calibration":
+                        box.get(
+                            "geometry_calibration",
+                            None,
+                        ),
+
+                    "rendered":
+                        False,
+
+                    # Preserve the true placement source even though
+                    # the final box has passed through calibration.
+                    "placement_source":
+                        box.get(
+                            "source_before_geometry_calibration",
+                            box.get(
+                                "source",
+                                "geometric_projection",
+                            ),
+                        ),
                 }
 
                 if not box.get("visible", False):
@@ -2782,28 +3867,108 @@ def run_scenario(scenario, overwrite=False):
 
                 if sprite_bank_mode == "view_matrix":
 
-                    sprite_resized, resize_info = resize_view_matrix_sprite_to_box(
-                        sprite_rgba=sprite_rgba,
-                        target_box_w=box["box_width"],
-                        target_box_h=box["box_height"],
-                        anchor_x=sprite_info["anchor_x"],
-                        anchor_y=sprite_info["anchor_y"],
-                    )
+                    if (
+                        render_transform_mode
+                        ==
+                        "subpixel_affine"
+                    ):
 
-                    spr_h, spr_w = sprite_resized.shape[:2]
+                        sprite_resized, resize_info = (
+                            warp_view_matrix_sprite_to_box_subpixel(
+                                sprite_rgba=
+                                    sprite_rgba,
 
-                    paste_x1 = int(
-                        round(
-                            box["cx"]
-                            - resize_info["scaled_anchor_x"]
+                                frame_w=
+                                    frame_w,
+
+                                frame_h=
+                                    frame_h,
+
+                                target_cx=
+                                    box["cx"],
+
+                                target_bottom_y=
+                                    box["bottom_y"],
+
+                                target_box_w=
+                                    box["box_width"],
+
+                                target_box_h=
+                                    box["box_height"],
+
+                                anchor_x=
+                                    sprite_info["anchor_x"],
+
+                                anchor_y=
+                                    sprite_info["anchor_y"],
+
+                                alpha_threshold=
+                                    10,
+                            )
                         )
-                    )
 
-                    paste_y1 = int(
-                        round(
-                            box["bottom_y"]
-                            - resize_info["scaled_anchor_y"]
+                        paste = (
+                            resize_info[
+                                "paste"
+                            ]
                         )
+
+                        paste_x1 = int(
+                            paste["x1"]
+                        )
+
+                        paste_y1 = int(
+                            paste["y1"]
+                        )
+
+                    else:
+
+                        # ----------------------------------------------------
+                        # Existing baseline integer-resize behavior.
+                        # Keep unchanged for reproducibility.
+                        # ----------------------------------------------------
+
+                        sprite_resized, resize_info = (
+                            resize_view_matrix_sprite_to_box(
+                                sprite_rgba=
+                                    sprite_rgba,
+
+                                target_box_w=
+                                    box["box_width"],
+
+                                target_box_h=
+                                    box["box_height"],
+
+                                anchor_x=
+                                    sprite_info["anchor_x"],
+
+                                anchor_y=
+                                    sprite_info["anchor_y"],
+                            )
+                        )
+
+                        paste_x1 = int(
+                            round(
+                                box["cx"]
+                                -
+                                resize_info[
+                                    "scaled_anchor_x"
+                                ]
+                            )
+                        )
+
+                        paste_y1 = int(
+                            round(
+                                box["bottom_y"]
+                                -
+                                resize_info[
+                                    "scaled_anchor_y"
+                                ]
+                            )
+                        )
+
+                    spr_h, spr_w = (
+                        sprite_resized.shape[:2]
                     )
 
                 else:

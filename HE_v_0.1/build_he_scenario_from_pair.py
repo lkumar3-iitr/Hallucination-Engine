@@ -34,7 +34,50 @@ def main():
         required=True,
         help="Pair folder name under recordings/he_pairs/",
     )
+    parser.add_argument(
+        "--sprite-mode",
+        choices=[
+            "legacy",
+            "view_matrix",
+        ],
+        default="legacy",
+        help=(
+            "Sprite selection mode. "
+            "'legacy' uses the old angle-only sprite bank; "
+            "'view_matrix' uses one or more view_matrix.csv files."
+        ),
+    )
 
+    parser.add_argument(
+        "--view-matrix-csv",
+        action="append",
+        default=[],
+        help=(
+            "Path to a view_matrix.csv file. "
+            "May be supplied multiple times."
+        ),
+    )
+
+    parser.add_argument(
+        "--target-height-m",
+        type=float,
+        default=0.75,
+    )
+
+    parser.add_argument(
+        "--vertical-mode",
+        choices=[
+            "state_y",
+            "level_ground",
+        ],
+        default="level_ground",
+    )
+
+    parser.add_argument(
+        "--camera-height-m",
+        type=float,
+        default=1.6,
+    )
     parser.add_argument(
         "--scenario-id",
         default=None,
@@ -140,7 +183,78 @@ def main():
         else f"{pair_name}_he"
     )
 
-    output_dir = Path("he_outputs") / f"{pair_name}_he"
+    # Using scenario_id keeps different render configurations
+    # for the same CARLA pair isolated from one another.
+    output_dir = (
+        Path("he_outputs")
+        / scenario_id
+    )
+
+    # ------------------------------------------------------------
+    # Sprite-bank configuration
+    # ------------------------------------------------------------
+
+    if args.sprite_mode == "view_matrix":
+
+        if not args.view_matrix_csv:
+            raise RuntimeError(
+                "--sprite-mode view_matrix requires at least one "
+                "--view-matrix-csv"
+            )
+
+        sprite_bank_config = {
+            "mode":
+                "view_matrix",
+
+            "view_matrix_csvs":
+                [
+                    str(Path(p))
+                    for p in args.view_matrix_csv
+                ],
+
+            "target_height_m":
+                float(
+                    args.target_height_m
+                ),
+
+            "vertical_mode":
+                str(
+                    args.vertical_mode
+                ),
+
+            "camera_height_m":
+                float(
+                    args.camera_height_m
+                ),
+        }
+
+    else:
+
+        sprite_bank_config = {
+            "root":
+                args.sprite_root,
+
+            "rgba_dir":
+                "rgba",
+
+            "angle_format":
+                "angle_{angle:03d}_rgba.png",
+
+            "angle_convention":
+                {
+                    "0":
+                        "rear_view",
+
+                    "90":
+                        "side_view",
+
+                    "180":
+                        "front_view",
+
+                    "270":
+                        "opposite_side_view",
+                },
+        }
 
     scenario = {
         "schema_version": "he_scenario_v1",
@@ -167,7 +281,8 @@ def main():
             "save_frames": False,
             "save_masks": True,
             "save_metadata": True,
-            "output_video_name": f"{pair_name}_he.mp4",
+            "output_video_name":
+                f"{scenario_id}.mp4",
         },
 
         "coordinate_mode": {
@@ -214,18 +329,8 @@ def main():
             "fps": float(fps),
         },
 
-        "sprite_bank": {
-            "root": args.sprite_root,
-            "rgba_dir": "rgba",
-            "angle_format": "angle_{angle:03d}_rgba.png",
-
-            "angle_convention": {
-                "0": "rear_view",
-                "90": "side_view",
-                "180": "front_view",
-                "270": "opposite_side_view",
-            },
-        },
+        "sprite_bank":
+            sprite_bank_config,
 
         "adversaries": [
             {
@@ -285,17 +390,25 @@ def main():
             indent=2,
         )
 
-    print("============================================================")
+    print()
+    print("=" * 72)
     print("HE scenario generated")
-    print("============================================================")
-    print("Pair:           ", pair_name)
-    print("Frames:         ", frame_count)
-    print("FPS:            ", fps)
-    print("First frame:    ", keyframes[0])
-    print("Last frame:     ", keyframes[-1])
-    print("Scenario JSON:  ", output_json)
-    print("HE output dir:  ", output_dir)
-    print("============================================================")
+    print("=" * 72)
+    print("Pair        :", pair_name)
+    print("Scenario ID :", scenario_id)
+    print("Sprite mode :", args.sprite_mode)
+    print("Frames      :", frame_count)
+    print("FPS         :", fps)
+    print("Output JSON :", output_json)
+    print("Output dir  :", output_dir)
+
+    if args.sprite_mode == "view_matrix":
+        print(
+            "View CSVs   :",
+            len(args.view_matrix_csv),
+        )
+
+    print("=" * 72)
 
 
 if __name__ == "__main__":
