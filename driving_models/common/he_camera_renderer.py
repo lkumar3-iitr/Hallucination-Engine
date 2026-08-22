@@ -794,6 +794,23 @@ def project_virtual_actor(
         "bottom_y":
             bottom_y,
 
+        # Actor transform/reference origin projected directly
+        # into the camera. Unlike cx/bottom_y above, these do
+        # not depend on actor length/width/height.
+        "actor_reference_cx_px":
+            float(
+                center_projection[
+                    "u"
+                ]
+            ),
+
+        "actor_reference_bottom_y_px":
+            float(
+                center_projection[
+                    "v"
+                ]
+            ),
+
         "box_width":
             box_width,
 
@@ -1515,12 +1532,30 @@ def render_he_actor_view_matrix(
     height,
     fov,
     bottom_y_offset_px=0.0,
+    geometry_mode="proxy",
+    sprite_geometry=None,
 ):
 
     frame = (
         base_rgb.copy()
     )
+    geometry_mode = (
+        str(
+            geometry_mode
+        )
+        .strip()
+        .lower()
+    )
 
+    if geometry_mode not in {
+        "proxy",
+        "sprite_native",
+    }:
+        raise ValueError(
+            "geometry_mode must be either "
+            "'proxy' or 'sprite_native', got "
+            f"{geometry_mode!r}"
+        )
     # --------------------------------------------------------
     # Native-camera metric projection
     # --------------------------------------------------------
@@ -1564,6 +1599,25 @@ def render_he_actor_view_matrix(
 
         "query_elevation_deg":
             None,
+
+        "geometry_mode":
+            geometry_mode,
+
+        "geometry_version":
+            None,
+
+        "geometry_alpha_threshold":
+            None,
+
+        "target_box_width_px":
+            None,
+
+        "target_box_height_px":
+            None,
+
+        "sprite_native_geometry":
+            None,
+    
     }
 
     if not box.get(
@@ -1669,6 +1723,147 @@ def render_he_actor_view_matrix(
             meta,
         )
 
+    # --------------------------------------------------------
+    # Final visible geometry.
+    #
+    # proxy:
+    #     Preserve the existing dimensions-based projection.
+    #
+    # sprite_native:
+    #     Keep actor/camera projection for position, visibility
+    #     and depth, but obtain visible width/height directly
+    #     from the sprite bank's continuous geometry field.
+    # --------------------------------------------------------
+
+    target_box_w = float(
+        box[
+            "box_width"
+        ]
+    )
+
+    target_box_h = float(
+        box[
+            "box_height"
+        ]
+    )
+
+    warp_alpha_threshold = 10
+
+    geometry_prediction = None
+
+    if geometry_mode == "sprite_native":
+
+        if sprite_geometry is None:
+
+            meta[
+                "reason"
+            ] = "sprite_geometry_not_provided"
+
+            return (
+                frame,
+                meta,
+            )
+
+        geometry_prediction = (
+            sprite_geometry.predict(
+                viewpoint_angle_deg=
+                    float(
+                        sprite_info[
+                            "relative_angle_deg"
+                        ]
+                    ),
+
+                elevation_deg=
+                    float(
+                        sprite_info[
+                            "query_elevation_deg"
+                        ]
+                    ),
+
+                depth_m=
+                    float(
+                        box[
+                            "depth_m"
+                        ]
+                    ),
+
+                target_width=
+                    width,
+
+                target_height=
+                    height,
+
+                target_fov=
+                    fov,
+            )
+        )
+
+        if not geometry_prediction.get(
+            "valid",
+            False,
+        ):
+
+            meta[
+                "reason"
+            ] = (
+                "sprite_native_geometry_failed"
+            )
+
+            meta[
+                "sprite_native_geometry"
+            ] = geometry_prediction
+
+            return (
+                frame,
+                meta,
+            )
+
+        target_box_w = float(
+            geometry_prediction[
+                "box_width_px"
+            ]
+        )
+
+        target_box_h = float(
+            geometry_prediction[
+                "box_height_px"
+            ]
+        )
+
+        warp_alpha_threshold = int(
+            geometry_prediction[
+                "geometry_alpha_threshold"
+            ]
+        )
+
+        meta[
+            "geometry_version"
+        ] = geometry_prediction.get(
+            "geometry_version"
+        )
+
+        meta[
+            "sprite_native_geometry"
+        ] = geometry_prediction
+
+    meta[
+        "geometry_alpha_threshold"
+    ] = int(
+        warp_alpha_threshold
+    )
+
+    meta[
+        "target_box_width_px"
+    ] = float(
+        target_box_w
+    )
+
+    meta[
+        "target_box_height_px"
+    ] = float(
+        target_box_h
+    )
+
     sprite_rgba = (
         sprite_cache.load_rgba(
             sprite_info[
@@ -1705,14 +1900,10 @@ def render_he_actor_view_matrix(
             render_bottom_y,
 
         target_box_w=
-            box[
-                "box_width"
-            ],
+            target_box_w,
 
         target_box_h=
-            box[
-                "box_height"
-            ],
+            target_box_h,
 
         anchor_x=
             sprite_info[
@@ -1724,7 +1915,8 @@ def render_he_actor_view_matrix(
                 "anchor_y"
             ],
 
-        alpha_threshold=10,
+        alpha_threshold=
+            warp_alpha_threshold,
     )
 
     if resize_info.get(

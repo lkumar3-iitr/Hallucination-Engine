@@ -113,6 +113,9 @@ from he_camera_renderer import (
     render_he_actor_view_matrix,
     load_view_matrix_sprite_bank,
 )
+from sprite_native_geometry_v1 import (
+    load_sprite_native_geometry,
+)
 # ============================================================
 # Existing validated HE compositor utilities
 # ============================================================
@@ -2157,6 +2160,7 @@ def main():
             "he",
         ],
     )
+    
     parser.add_argument(
         "--he-bottom-y-offset-px",
         type=float,
@@ -2277,6 +2281,30 @@ def main():
         help=(
             "Production 4320 sprite-bank "
             "view_matrix.csv."
+        ),
+    )
+
+    parser.add_argument(
+        "--he-geometry-mode",
+        choices=[
+            "proxy",
+            "sprite_native",
+        ],
+        default="proxy",
+        help=(
+            "HE visual geometry provider. "
+            "'proxy' preserves the existing render-dimensions path. "
+            "'sprite_native' derives visible width/height from "
+            "sprite_geometry_v1.csv."
+        ),
+    )
+
+    parser.add_argument(
+        "--sprite-geometry-csv",
+        default=None,
+        help=(
+            "sprite_geometry_v1.csv used when "
+            "--he-geometry-mode sprite_native."
         ),
     )
 
@@ -2411,7 +2439,39 @@ def main():
         "[render dimensions]",
         render_dimensions,
     )
+    # ========================================================
+    # HE projection dimensions
+    #
+    # proxy:
+    #     Preserve the existing visual-proxy projection.
+    #
+    # sprite_native:
+    #     Use true physical actor geometry only for actor/camera
+    #     projection, position, visibility and contact reference.
+    #     Final visible width/height come from the sprite bank.
+    # ========================================================
 
+    if args.he_geometry_mode == "sprite_native":
+
+        he_projection_dimensions = (
+            physical_dimensions
+        )
+
+    else:
+
+        he_projection_dimensions = (
+            render_dimensions
+        )
+
+    print(
+        "[HE geometry mode]",
+        args.he_geometry_mode,
+    )
+
+    print(
+        "[HE projection dimensions]",
+        he_projection_dimensions,
+    )
     blueprint_name = (
         actor_info.get(
             "asset_key"
@@ -2537,6 +2597,7 @@ def main():
     sprite_bank = None
     view_matrix = None
     sprite_cache = None
+    sprite_geometry = None
 
     if args.condition == "he":
 
@@ -2585,7 +2646,39 @@ def main():
         sprite_cache = (
             SpriteCache()
         )
+        if args.he_geometry_mode == "sprite_native":
 
+            if args.sprite_geometry_csv is None:
+
+                raise RuntimeError(
+                    "--sprite-geometry-csv is required "
+                    "when --he-geometry-mode sprite_native."
+                )
+
+            sprite_geometry_csv = Path(
+                args.sprite_geometry_csv
+            ).resolve()
+
+            sprite_geometry = (
+                load_sprite_native_geometry(
+                    sprite_geometry_csv
+                )
+            )
+
+            print(
+                "[HE sprite geometry]",
+                sprite_geometry_csv,
+            )
+
+            print(
+                "[HE geometry version]",
+                sprite_geometry.geometry_version,
+            )
+
+            print(
+                "[HE geometry alpha threshold]",
+                sprite_geometry.geometry_alpha_threshold,
+            )
         print(
             "[HE view matrix]",
             view_matrix_csv,
@@ -3389,7 +3482,7 @@ def main():
                             current_image.transform,
 
                         dimensions=
-                            render_dimensions,
+                            he_projection_dimensions,
 
                         sprite_bank=
                             sprite_bank,
@@ -3409,7 +3502,12 @@ def main():
                         fov=
                             100.0,
                         bottom_y_offset_px=
-                            args.he_bottom_y_offset_px,                        
+                            args.he_bottom_y_offset_px,   
+                        geometry_mode=
+                            args.he_geometry_mode,
+
+                        sprite_geometry=
+                            sprite_geometry,                   
                     )
                 )
                 # --------------------------------------------
@@ -3457,7 +3555,7 @@ def main():
                                 current_image.transform,
 
                             dimensions=
-                                render_dimensions,
+                                he_projection_dimensions,
 
                             sprite_bank=
                                 sprite_bank,
@@ -3478,6 +3576,11 @@ def main():
                                 100.0,
                             bottom_y_offset_px=
                                 args.he_bottom_y_offset_px,
+                            geometry_mode=
+                                args.he_geometry_mode,
+
+                            sprite_geometry=
+                                sprite_geometry,                              
                         )
                     )
 
@@ -3496,7 +3599,7 @@ def main():
                                 current_image.transform,
 
                             dimensions=
-                                render_dimensions,
+                                he_projection_dimensions,
 
                             sprite_bank=
                                 sprite_bank,
@@ -3517,6 +3620,11 @@ def main():
                                 100.0,
                             bottom_y_offset_px=
                                 args.he_bottom_y_offset_px,
+                            geometry_mode=
+                                args.he_geometry_mode,
+
+                            sprite_geometry=
+                                sprite_geometry,                              
                         )
                     )
 
@@ -4130,9 +4238,103 @@ def main():
                                 "viewpoint_angle_deg"
                             ),
 
+                        "query_distance_m":
+                            he_meta.get(
+                                "query_distance_m"
+                            ),
+
+                        "selected_distance_m":
+                            he_meta.get(
+                                "selected_distance_m"
+                            ),
+
+                        "query_elevation_deg":
+                            he_meta.get(
+                                "query_elevation_deg"
+                            ),
+
+                        "selected_elevation_deg":
+                            he_meta.get(
+                                "selected_elevation_deg"
+                            ),
+
+                        "sprite_path":
+                            he_meta.get(
+                                "sprite_path"
+                            ),
+                        "geometry_mode":
+                            he_meta.get(
+                                "geometry_mode"
+                            ),
+
+                        "geometry_version":
+                            he_meta.get(
+                                "geometry_version"
+                            ),
+
+                        "geometry_alpha_threshold":
+                            he_meta.get(
+                                "geometry_alpha_threshold"
+                            ),
+
+                        "target_box_width_px":
+                            he_meta.get(
+                                "target_box_width_px"
+                            ),
+
+                        "target_box_height_px":
+                            he_meta.get(
+                                "target_box_height_px"
+                            ),
+
+                        "sprite_native_geometry":
+                            he_meta.get(
+                                "sprite_native_geometry"
+                            ),
+
                         "depth_m":
                             he_box.get(
                                 "depth_m"
+                            ),
+
+                        "projected_cx_px":
+                            he_box.get(
+                                "cx"
+                            ),
+
+                        "projected_bottom_y_px":
+                            he_box.get(
+                                "bottom_y"
+                            ),
+
+                        "actor_reference_cx_px":
+                            he_box.get(
+                                "actor_reference_cx_px"
+                            ),
+
+                        "actor_reference_bottom_y_px":
+                            he_box.get(
+                                "actor_reference_bottom_y_px"
+                            ),
+
+                        "render_bottom_y_px":
+                            he_meta.get(
+                                "render_bottom_y"
+                            ),
+
+                        "projected_box_width_px":
+                            he_box.get(
+                                "box_width"
+                            ),
+
+                        "projected_box_height_px":
+                            he_box.get(
+                                "box_height"
+                            ),
+
+                        "bottom_y_offset_px":
+                            he_meta.get(
+                                "bottom_y_offset_px"
                             ),
                     }
 
