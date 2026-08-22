@@ -1,21 +1,27 @@
 """
 analyze_tcp_he_repeats_v1.py
 
-Analyze repeated TCP closed-loop CARLA-vs-HE trials.
+Aggregate repeated TCP CARLA <-> HE cut-in experiments.
 
-Expected structure:
+Nothing from the single-pair evaluator is removed.
 
-outputs/tcp_he_repeat_v1/tcp_lead_brake_001/
-    run_01/
-        carla/*.csv
-        he/*.csv
-    ...
-    run_05/
-        carla/*.csv
-        he/*.csv
+Reports:
+
+    CARLA mean +/- sample std
+    HE mean +/- sample std
+    paired HE-CARLA mean +/- sample std
+
+for scenario events, braking, safety outcomes and paired
+control/state divergence.
+
+Also aggregates short-horizon and full closed-loop metrics.
 """
 
+from __future__ import annotations
+
+import argparse
 import csv
+import json
 import math
 from pathlib import Path
 
@@ -23,399 +29,324 @@ import numpy as np
 
 
 THIS_FILE = Path(__file__).resolve()
+HE_ROOT = THIS_FILE.parents[2]
 
-TCP_DIR = THIS_FILE.parent
 
-SCENARIO_ID = "tcp_lead_brake_001"
-
-ROOT = (
-    TCP_DIR
+DEFAULT_ROOT = (
+    HE_ROOT
+    / "driving_models"
+    / "TCP"
     / "outputs"
-    / "tcp_he_repeat_v1"
-    / SCENARIO_ID
+    / "tcp_4320_repeats_v1"
 )
 
 
-EVENT_START_S = 4.0
+DEFAULT_SCENARIO = (
+    "tcp_cutin_001"
+)
 
-BRAKE_THRESHOLD = 0.5
-BRAKE_CONFIRM_FRAMES = 3
 
-STOP_SPEED_MPS = 0.10
-STOP_CONFIRM_FRAMES = 5
+# ============================================================
+# Condition metrics retained from pair analyzer
+# ============================================================
+
+CONDITION_METRICS = [
+
+    "cutin_start_s",
+    "cutin_gap_m",
+    "cutin_ego_speed_mps",
+
+    "boundary_time_s",
+    "boundary_gap_m",
+    "boundary_ego_speed_mps",
+
+    "center_time_s",
+    "center_gap_m",
+    "center_ego_speed_mps",
+
+    "first_any_brake_s",
+    "first_any_brake_gap_m",
+
+    "first_strong_brake_s",
+    "first_strong_brake_gap_m",
+
+    "sustained_brake_s",
+    "sustained_brake_gap_m",
+
+    "minimum_gap_m",
+    "minimum_gap_after_boundary_m",
+    "minimum_ttc_s",
+
+    "maximum_route_deviation_m",
+
+    "final_gap_m",
+    "final_ego_speed_mps",
+]
+
+
+WINDOWS = [
+
+    "frames_0_20",
+    "frames_0_40",
+    "frames_0_80",
+
+    "full",
+
+    "post_cutin",
+    "post_boundary",
+]
+
+
+NUMERIC_SERIES = [
+
+    "tcp_steer",
+    "tcp_throttle",
+    "tcp_brake",
+
+    "ego_speed_mps",
+    "bumper_gap_m",
+
+    "route_deviation_m",
+
+    "desired_speed",
+    "pred_speed",
+]
 
 
 # ============================================================
 # Helpers
 # ============================================================
 
-def as_float(row, key):
-    value = str(
-        row.get(key, "")
-    ).strip()
+def load_json(
+    path: Path,
+):
 
-    if value == "":
-        return float("nan")
-
-    try:
-        return float(value)
-    except ValueError:
-        return float("nan")
-
-
-def load_csv(path):
     with path.open(
         "r",
         encoding="utf-8",
-        newline="",
     ) as fp:
-        return list(
-            csv.DictReader(fp)
+
+        return json.load(
+            fp
         )
 
 
-def find_csv(run_dir, condition):
-    files = sorted(
-        (
-            run_dir
-            / condition
-        ).glob("*.csv")
-    )
+def nested_get(
+    data,
+    keys,
+):
 
-    # Avoid accidentally using a comparison CSV.
-    files = [
-        p
-        for p in files
-        if "comparison" not in p.name
-    ]
+    current = data
 
-    if len(files) != 1:
-        raise RuntimeError(
-            f"Expected exactly one CSV in "
-            f"{run_dir / condition}, found {files}"
-        )
-
-    return files[0]
-
-
-# ============================================================
-# Event detection
-# ============================================================
-
-def first_brake_pulse(rows):
-
-    for row in rows:
-
-        t = as_float(
-            row,
-            "t_s",
-        )
-
-        brake = as_float(
-            row,
-            "tcp_brake",
-        )
+    for key in keys:
 
         if (
-            t >= EVENT_START_S
-            and
-            np.isfinite(brake)
-            and
-            brake >= BRAKE_THRESHOLD
+            not isinstance(
+                current,
+                dict,
+            )
+            or
+            key not in current
         ):
-            return {
-                "t_s":
-                    t,
 
-                "frame":
-                    int(
-                        row["probe_idx"]
-                    ),
+            return float("nan")
 
-                "gap_m":
-                    as_float(
-                        row,
-                        "bumper_gap_m",
-                    ),
-            }
+        current = current[
+            key
+        ]
 
-    return None
+    if current is None:
 
+        return float("nan")
 
-def first_sustained_brake(rows):
+    try:
 
-    for i in range(
-        len(rows)
-        - BRAKE_CONFIRM_FRAMES
-        + 1
+        value = float(
+            current
+        )
+
+    except (
+        TypeError,
+        ValueError,
     ):
 
-        t = as_float(
-            rows[i],
-            "t_s",
-        )
+        return float("nan")
 
-        if t < EVENT_START_S:
-            continue
-
-        window = rows[
-            i:
-            i + BRAKE_CONFIRM_FRAMES
-        ]
-
-        brakes = [
-            as_float(
-                row,
-                "tcp_brake",
-            )
-            for row in window
-        ]
-
-        if all(
-            np.isfinite(b)
-            and
-            b >= BRAKE_THRESHOLD
-            for b in brakes
-        ):
-            row = rows[i]
-
-            return {
-                "t_s":
-                    t,
-
-                "frame":
-                    int(
-                        row["probe_idx"]
-                    ),
-
-                "gap_m":
-                    as_float(
-                        row,
-                        "bumper_gap_m",
-                    ),
-            }
-
-    return None
+    return value
 
 
-def confirmed_stop(rows):
+def finite_values(
+    values,
+):
 
-    for i in range(
-        len(rows)
-        - STOP_CONFIRM_FRAMES
-        + 1
-    ):
-
-        window = rows[
-            i:
-            i + STOP_CONFIRM_FRAMES
-        ]
-
-        speeds = [
-            as_float(
-                row,
-                "ego_speed_mps",
-            )
-            for row in window
-        ]
-
-        if all(
-            np.isfinite(v)
-            and
-            v <= STOP_SPEED_MPS
-            for v in speeds
-        ):
-
-            row = rows[i]
-
-            return {
-                "t_s":
-                    as_float(
-                        row,
-                        "t_s",
-                    ),
-
-                "frame":
-                    int(
-                        row["probe_idx"]
-                    ),
-
-                "gap_m":
-                    as_float(
-                        row,
-                        "bumper_gap_m",
-                    ),
-            }
-
-    return None
-
-
-# ============================================================
-# Per-run metrics
-# ============================================================
-
-def compute_metrics(rows):
-
-    gaps = np.array(
-        [
-            as_float(
-                row,
-                "bumper_gap_m",
-            )
-            for row in rows
-        ],
-        dtype=float,
-    )
-
-    finite_gaps = gaps[
-        np.isfinite(gaps)
-    ]
-
-    first_brake = (
-        first_brake_pulse(
-            rows
-        )
-    )
-
-    sustained = (
-        first_sustained_brake(
-            rows
-        )
-    )
-
-    stop = (
-        confirmed_stop(
-            rows
-        )
-    )
-
-    collision = False
-
-    for row in rows:
-        value = str(
-            row.get(
-                "virtual_collision",
-                "",
-            )
-        ).strip().lower()
-
-        if value in (
-            "true",
-            "1",
-            "yes",
-        ):
-            collision = True
-            break
-
-    return {
-        "first_brake_s":
-            (
-                first_brake["t_s"]
-                if first_brake
-                else float("nan")
-            ),
-
-        "sustained_brake_s":
-            (
-                sustained["t_s"]
-                if sustained
-                else float("nan")
-            ),
-
-        "sustained_brake_gap_m":
-            (
-                sustained["gap_m"]
-                if sustained
-                else float("nan")
-            ),
-
-        "stop_time_s":
-            (
-                stop["t_s"]
-                if stop
-                else float("nan")
-            ),
-
-        "stop_gap_m":
-            (
-                stop["gap_m"]
-                if stop
-                else float("nan")
-            ),
-
-        "minimum_gap_m":
-            (
-                float(
-                    np.min(
-                        finite_gaps
-                    )
-                )
-                if len(finite_gaps)
-                else float("nan")
-            ),
-
-        "final_gap_m":
-            (
-                float(
-                    finite_gaps[-1]
-                )
-                if len(finite_gaps)
-                else float("nan")
-            ),
-
-        "collision":
-            collision,
-    }
-
-
-# ============================================================
-# Statistics
-# ============================================================
-
-def mean_std(values):
-
-    values = np.asarray(
+    array = np.asarray(
         values,
-        dtype=float,
+        dtype=np.float64,
     )
 
-    values = values[
-        np.isfinite(values)
+    return array[
+        np.isfinite(
+            array
+        )
     ]
+
+
+def summarize(
+    values,
+):
+
+    values = finite_values(
+        values
+    )
 
     if len(values) == 0:
-        return (
-            float("nan"),
-            float("nan"),
-        )
 
-    mean = float(
-        np.mean(values)
-    )
+        return {
+            "n": 0,
+            "mean": None,
+            "sample_std": None,
+            "median": None,
+            "min": None,
+            "max": None,
+        }
 
-    if len(values) > 1:
-        std = float(
+    if len(values) >= 2:
+
+        sample_std = float(
             np.std(
                 values,
                 ddof=1,
             )
         )
+
     else:
-        std = 0.0
 
-    return mean, std
+        sample_std = 0.0
+
+    return {
+
+        "n":
+            int(
+                len(values)
+            ),
+
+        "mean":
+            float(
+                np.mean(
+                    values
+                )
+            ),
+
+        "sample_std":
+            sample_std,
+
+        "median":
+            float(
+                np.median(
+                    values
+                )
+            ),
+
+        "min":
+            float(
+                np.min(
+                    values
+                )
+            ),
+
+        "max":
+            float(
+                np.max(
+                    values
+                )
+            ),
+    }
 
 
-def print_stat(label, values, unit):
+def fmt_mean_std(
+    summary,
+    digits=4,
+):
 
-    mean, std = mean_std(
-        values
+    mean = summary.get(
+        "mean"
     )
 
-    print(
-        f"{label:27s}: "
-        f"{mean:8.3f} +/- {std:7.3f} {unit}"
+    std = summary.get(
+        "sample_std"
     )
+
+    if (
+        mean is None
+        or
+        std is None
+    ):
+
+        return "none"
+
+    return (
+        f"{mean:.{digits}f}"
+        f" +/- "
+        f"{std:.{digits}f}"
+    )
+
+
+def json_safe(
+    value,
+):
+
+    if isinstance(
+        value,
+        dict,
+    ):
+
+        return {
+            key:
+                json_safe(item)
+            for key, item
+            in value.items()
+        }
+
+    if isinstance(
+        value,
+        list,
+    ):
+
+        return [
+            json_safe(item)
+            for item in value
+        ]
+
+    if isinstance(
+        value,
+        (
+            np.floating,
+            float,
+        ),
+    ):
+
+        value = float(
+            value
+        )
+
+        if not math.isfinite(
+            value
+        ):
+
+            return None
+
+        return value
+
+    if isinstance(
+        value,
+        np.integer,
+    ):
+
+        return int(
+            value
+        )
+
+    return value
 
 
 # ============================================================
@@ -424,425 +355,917 @@ def print_stat(label, values, unit):
 
 def main():
 
-    if not ROOT.exists():
-        raise FileNotFoundError(
-            ROOT
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--root",
+        default=str(
+            DEFAULT_ROOT
+        ),
+    )
+
+    parser.add_argument(
+        "--scenario",
+        default=DEFAULT_SCENARIO,
+    )
+
+    parser.add_argument(
+        "--repeats",
+        type=int,
+        default=5,
+    )
+
+    args = parser.parse_args()
+
+    root = Path(
+        args.root
+    ).resolve()
+
+    summaries = []
+
+    # ========================================================
+    # Load pair summaries
+    # ========================================================
+
+    for pair_idx in range(
+        1,
+        args.repeats + 1,
+    ):
+
+        pair_name = (
+            f"pair_{pair_idx:02d}"
         )
 
-    run_dirs = sorted(
-        [
-            p
-            for p in ROOT.glob("run_*")
-            if p.is_dir()
+        pair_root = (
+            root
+            / pair_name
+        )
+
+        summary_path = (
+            pair_root
+            / args.scenario
+            / "analysis"
+            / "tcp_cutin_pair_summary.json"
+        )
+
+        if not summary_path.exists():
+
+            raise FileNotFoundError(
+                "Missing pair summary:\n"
+                f"{summary_path}"
+            )
+
+        summary = load_json(
+            summary_path
+        )
+
+        pair_manifest_path = (
+            pair_root
+            / "pair_manifest.json"
+        )
+
+        if pair_manifest_path.exists():
+
+            pair_manifest = (
+                load_json(
+                    pair_manifest_path
+                )
+            )
+
+            order = (
+                " -> ".join(
+                    pair_manifest.get(
+                        "condition_order",
+                        [],
+                    )
+                )
+            )
+
+        else:
+
+            order = ""
+
+        summaries.append({
+
+            "pair_idx":
+                pair_idx,
+
+            "pair_name":
+                pair_name,
+
+            "order":
+                order,
+
+            "summary":
+                summary,
+
+            "summary_path":
+                str(
+                    summary_path
+                ),
+        })
+
+    # ========================================================
+    # Aggregate condition metrics
+    # ========================================================
+
+    condition_stats = {}
+
+    pair_table = []
+
+    for metric in CONDITION_METRICS:
+
+        carla_values = []
+
+        he_values = []
+
+        delta_values = []
+
+        for item in summaries:
+
+            summary = item[
+                "summary"
+            ]
+
+            c = nested_get(
+                summary,
+                [
+                    "carla",
+                    metric,
+                ],
+            )
+
+            h = nested_get(
+                summary,
+                [
+                    "he",
+                    metric,
+                ],
+            )
+
+            d = nested_get(
+                summary,
+                [
+                    "he_minus_carla",
+                    metric,
+                ],
+            )
+
+            carla_values.append(
+                c
+            )
+
+            he_values.append(
+                h
+            )
+
+            delta_values.append(
+                d
+            )
+
+        condition_stats[
+            metric
+        ] = {
+
+            "carla":
+                summarize(
+                    carla_values
+                ),
+
+            "he":
+                summarize(
+                    he_values
+                ),
+
+            "he_minus_carla":
+                summarize(
+                    delta_values
+                ),
+        }
+
+    # ========================================================
+    # Aggregate paired time-series metrics
+    # ========================================================
+
+    paired_window_stats = {}
+
+    for window_name in WINDOWS:
+
+        window_result = {}
+
+        for series_name in NUMERIC_SERIES:
+
+            metric_result = {}
+
+            for statistic in (
+                "mae",
+                "rmse",
+                "p95_abs",
+                "max_abs",
+                "bias_he_minus_carla",
+                "correlation",
+            ):
+
+                values = []
+
+                for item in summaries:
+
+                    value = nested_get(
+                        item[
+                            "summary"
+                        ],
+                        [
+                            "paired_windows",
+                            window_name,
+                            series_name,
+                            statistic,
+                        ],
+                    )
+
+                    values.append(
+                        value
+                    )
+
+                metric_result[
+                    statistic
+                ] = summarize(
+                    values
+                )
+
+            window_result[
+                series_name
+            ] = metric_result
+
+        # ----------------------------------------------------
+        # Brake agreement
+        # ----------------------------------------------------
+
+        brake_result = {}
+
+        for statistic in (
+            "agreement_fraction",
+            "disagreement_fraction",
+        ):
+
+            values = []
+
+            for item in summaries:
+
+                value = nested_get(
+                    item[
+                        "summary"
+                    ],
+                    [
+                        "paired_windows",
+                        window_name,
+                        "brake_decision",
+                        statistic,
+                    ],
+                )
+
+                values.append(
+                    value
+                )
+
+            brake_result[
+                statistic
+            ] = summarize(
+                values
+            )
+
+        window_result[
+            "brake_decision"
+        ] = brake_result
+
+        # ----------------------------------------------------
+        # Ego XY divergence
+        # ----------------------------------------------------
+
+        trajectory_result = {}
+
+        for statistic in (
+            "mean_m",
+            "p95_m",
+            "max_m",
+            "final_m",
+        ):
+
+            values = []
+
+            for item in summaries:
+
+                value = nested_get(
+                    item[
+                        "summary"
+                    ],
+                    [
+                        "paired_windows",
+                        window_name,
+                        "ego_xy_trajectory",
+                        statistic,
+                    ],
+                )
+
+                values.append(
+                    value
+                )
+
+            trajectory_result[
+                statistic
+            ] = summarize(
+                values
+            )
+
+        window_result[
+            "ego_xy_trajectory"
+        ] = trajectory_result
+
+        paired_window_stats[
+            window_name
+        ] = window_result
+
+    # ========================================================
+    # Collision statistics
+    # ========================================================
+
+    carla_collision_count = 0
+
+    he_collision_count = 0
+
+    outcome_agreement_count = 0
+
+    for item in summaries:
+
+        summary = item[
+            "summary"
         ]
-    )
 
-    if not run_dirs:
-        raise RuntimeError(
-            f"No run directories found in {ROOT}"
-        )
+        if summary[
+            "carla"
+        ][
+            "collision"
+        ]:
 
-    results = []
+            carla_collision_count += 1
 
-    for run_dir in run_dirs:
+        if summary[
+            "he"
+        ][
+            "collision"
+        ]:
 
-        run_number = int(
-            run_dir.name.split("_")[-1]
-        )
+            he_collision_count += 1
 
-        carla_csv = find_csv(
-            run_dir,
-            "carla",
-        )
+        if summary.get(
+            "collision_outcome_agreement",
+            False,
+        ):
 
-        he_csv = find_csv(
-            run_dir,
-            "he",
-        )
+            outcome_agreement_count += 1
 
-        carla = compute_metrics(
-            load_csv(
-                carla_csv
-            )
-        )
+    # ========================================================
+    # Pair table
+    # ========================================================
 
-        he = compute_metrics(
-            load_csv(
-                he_csv
-            )
-        )
+    for item in summaries:
 
-        results.append(
-            {
-                "run":
-                    run_number,
-
-                "carla":
-                    carla,
-
-                "he":
-                    he,
-            }
-        )
-
-    print()
-    print("=" * 100)
-    print("TCP CARLA vs HE REPEATED-TRIAL ANALYSIS")
-    print("=" * 100)
-
-    print()
-    print("PER-RUN OUTCOMES")
-    print("-" * 100)
-
-    print(
-        "run | "
-        "CARLA brake | HE brake | delta | "
-        "CARLA final gap | HE final gap | delta | "
-        "collision"
-    )
-
-    print("-" * 100)
-
-    for result in results:
-
-        c = result["carla"]
-        h = result["he"]
-
-        brake_delta = (
-            h["sustained_brake_s"]
-            -
-            c["sustained_brake_s"]
-        )
-
-        gap_delta = (
-            h["final_gap_m"]
-            -
-            c["final_gap_m"]
-        )
-
-        print(
-            f"{result['run']:3d} | "
-            f"{c['sustained_brake_s']:11.2f} | "
-            f"{h['sustained_brake_s']:8.2f} | "
-            f"{brake_delta:+6.2f} | "
-            f"{c['final_gap_m']:15.3f} | "
-            f"{h['final_gap_m']:12.3f} | "
-            f"{gap_delta:+7.3f} | "
-            f"C={int(c['collision'])} "
-            f"H={int(h['collision'])}"
-        )
-
-    # --------------------------------------------------------
-    # Condition distributions
-    # --------------------------------------------------------
-
-    print()
-    print("CARLA DISTRIBUTION")
-    print("-" * 100)
-
-    print_stat(
-        "sustained brake onset",
-        [
-            r["carla"][
-                "sustained_brake_s"
-            ]
-            for r in results
-        ],
-        "s",
-    )
-
-    print_stat(
-        "confirmed stop time",
-        [
-            r["carla"][
-                "stop_time_s"
-            ]
-            for r in results
-        ],
-        "s",
-    )
-
-    print_stat(
-        "gap at confirmed stop",
-        [
-            r["carla"][
-                "stop_gap_m"
-            ]
-            for r in results
-        ],
-        "m",
-    )
-
-    print_stat(
-        "minimum gap",
-        [
-            r["carla"][
-                "minimum_gap_m"
-            ]
-            for r in results
-        ],
-        "m",
-    )
-
-    print_stat(
-        "final gap",
-        [
-            r["carla"][
-                "final_gap_m"
-            ]
-            for r in results
-        ],
-        "m",
-    )
-
-
-    print()
-    print("HE DISTRIBUTION")
-    print("-" * 100)
-
-    print_stat(
-        "sustained brake onset",
-        [
-            r["he"][
-                "sustained_brake_s"
-            ]
-            for r in results
-        ],
-        "s",
-    )
-
-    print_stat(
-        "confirmed stop time",
-        [
-            r["he"][
-                "stop_time_s"
-            ]
-            for r in results
-        ],
-        "s",
-    )
-
-    print_stat(
-        "gap at confirmed stop",
-        [
-            r["he"][
-                "stop_gap_m"
-            ]
-            for r in results
-        ],
-        "m",
-    )
-
-    print_stat(
-        "minimum gap",
-        [
-            r["he"][
-                "minimum_gap_m"
-            ]
-            for r in results
-        ],
-        "m",
-    )
-
-    print_stat(
-        "final gap",
-        [
-            r["he"][
-                "final_gap_m"
-            ]
-            for r in results
-        ],
-        "m",
-    )
-
-
-    # --------------------------------------------------------
-    # Paired differences
-    # --------------------------------------------------------
-
-    print()
-    print("PAIRED HE - CARLA DIFFERENCES")
-    print("-" * 100)
-
-    brake_deltas = np.array(
-        [
-            r["he"][
-                "sustained_brake_s"
-            ]
-            -
-            r["carla"][
-                "sustained_brake_s"
-            ]
-            for r in results
-        ],
-        dtype=float,
-    )
-
-    stop_deltas = np.array(
-        [
-            r["he"][
-                "stop_time_s"
-            ]
-            -
-            r["carla"][
-                "stop_time_s"
-            ]
-            for r in results
-        ],
-        dtype=float,
-    )
-
-    stop_gap_deltas = np.array(
-        [
-            r["he"][
-                "stop_gap_m"
-            ]
-            -
-            r["carla"][
-                "stop_gap_m"
-            ]
-            for r in results
-        ],
-        dtype=float,
-    )
-
-    min_gap_deltas = np.array(
-        [
-            r["he"][
-                "minimum_gap_m"
-            ]
-            -
-            r["carla"][
-                "minimum_gap_m"
-            ]
-            for r in results
-        ],
-        dtype=float,
-    )
-
-    final_gap_deltas = np.array(
-        [
-            r["he"][
-                "final_gap_m"
-            ]
-            -
-            r["carla"][
-                "final_gap_m"
-            ]
-            for r in results
-        ],
-        dtype=float,
-    )
-
-    print_stat(
-        "delta sustained brake",
-        brake_deltas,
-        "s",
-    )
-
-    print_stat(
-        "delta confirmed stop",
-        stop_deltas,
-        "s",
-    )
-
-    print_stat(
-        "delta stop gap",
-        stop_gap_deltas,
-        "m",
-    )
-
-    print_stat(
-        "delta minimum gap",
-        min_gap_deltas,
-        "m",
-    )
-
-    print_stat(
-        "delta final gap",
-        final_gap_deltas,
-        "m",
-    )
-
-
-    # --------------------------------------------------------
-    # Direction consistency
-    # --------------------------------------------------------
-
-    valid_gap_deltas = (
-        final_gap_deltas[
-            np.isfinite(
-                final_gap_deltas
-            )
+        summary = item[
+            "summary"
         ]
+
+        pair_table.append({
+
+            "pair":
+                item[
+                    "pair_idx"
+                ],
+
+            "order":
+                item[
+                    "order"
+                ],
+
+            "carla_sustained_brake_s":
+                nested_get(
+                    summary,
+                    [
+                        "carla",
+                        "sustained_brake_s",
+                    ],
+                ),
+
+            "he_sustained_brake_s":
+                nested_get(
+                    summary,
+                    [
+                        "he",
+                        "sustained_brake_s",
+                    ],
+                ),
+
+            "delta_sustained_brake_s":
+                nested_get(
+                    summary,
+                    [
+                        "he_minus_carla",
+                        "sustained_brake_s",
+                    ],
+                ),
+
+            "carla_min_gap_m":
+                nested_get(
+                    summary,
+                    [
+                        "carla",
+                        "minimum_gap_m",
+                    ],
+                ),
+
+            "he_min_gap_m":
+                nested_get(
+                    summary,
+                    [
+                        "he",
+                        "minimum_gap_m",
+                    ],
+                ),
+
+            "delta_min_gap_m":
+                nested_get(
+                    summary,
+                    [
+                        "he_minus_carla",
+                        "minimum_gap_m",
+                    ],
+                ),
+
+            "full_steer_mae":
+                nested_get(
+                    summary,
+                    [
+                        "paired_windows",
+                        "full",
+                        "tcp_steer",
+                        "mae",
+                    ],
+                ),
+
+            "full_throttle_mae":
+                nested_get(
+                    summary,
+                    [
+                        "paired_windows",
+                        "full",
+                        "tcp_throttle",
+                        "mae",
+                    ],
+                ),
+
+            "full_brake_mae":
+                nested_get(
+                    summary,
+                    [
+                        "paired_windows",
+                        "full",
+                        "tcp_brake",
+                        "mae",
+                    ],
+                ),
+
+            "full_speed_mae_mps":
+                nested_get(
+                    summary,
+                    [
+                        "paired_windows",
+                        "full",
+                        "ego_speed_mps",
+                        "mae",
+                    ],
+                ),
+
+            "full_gap_mae_m":
+                nested_get(
+                    summary,
+                    [
+                        "paired_windows",
+                        "full",
+                        "bumper_gap_m",
+                        "mae",
+                    ],
+                ),
+
+            "full_brake_agreement":
+                nested_get(
+                    summary,
+                    [
+                        "paired_windows",
+                        "full",
+                        "brake_decision",
+                        "agreement_fraction",
+                    ],
+                ),
+
+            "full_ego_xy_mean_m":
+                nested_get(
+                    summary,
+                    [
+                        "paired_windows",
+                        "full",
+                        "ego_xy_trajectory",
+                        "mean_m",
+                    ],
+                ),
+
+            "collision_agreement":
+                bool(
+                    summary.get(
+                        "collision_outcome_agreement",
+                        False,
+                    )
+                ),
+        })
+
+    # ========================================================
+    # Final summary
+    # ========================================================
+
+    aggregate = {
+
+        "schema":
+            "tcp_he_repeat_analysis_v1",
+
+        "scenario_id":
+            args.scenario,
+
+        "repeat_count":
+            args.repeats,
+
+        "condition_statistics":
+            condition_stats,
+
+        "paired_window_statistics":
+            paired_window_stats,
+
+        "collision_statistics": {
+
+            "carla_collision_count":
+                carla_collision_count,
+
+            "he_collision_count":
+                he_collision_count,
+
+            "outcome_agreement_count":
+                outcome_agreement_count,
+
+            "outcome_agreement_fraction":
+                (
+                    outcome_agreement_count
+                    /
+                    args.repeats
+                ),
+        },
+
+        "pairs":
+            pair_table,
+    }
+
+    aggregate = json_safe(
+        aggregate
     )
 
-    lower_count = int(
-        np.sum(
-            valid_gap_deltas
-            <
-            0.0
-        )
+    output_json = (
+        root
+        / "tcp_repeat_summary.json"
     )
 
-    higher_count = int(
-        np.sum(
-            valid_gap_deltas
-            >
-            0.0
+    with output_json.open(
+        "w",
+        encoding="utf-8",
+    ) as fp:
+
+        json.dump(
+            aggregate,
+            fp,
+            indent=2,
         )
+
+    # ========================================================
+    # Pair-level CSV
+    # ========================================================
+
+    output_csv = (
+        root
+        / "tcp_repeat_pairs.csv"
+    )
+
+    if pair_table:
+
+        with output_csv.open(
+            "w",
+            newline="",
+            encoding="utf-8",
+        ) as fp:
+
+            writer = csv.DictWriter(
+                fp,
+                fieldnames=list(
+                    pair_table[
+                        0
+                    ].keys()
+                ),
+            )
+
+            writer.writeheader()
+
+            for row in pair_table:
+
+                writer.writerow(
+                    row
+                )
+
+    # ========================================================
+    # Console summary
+    # ========================================================
+
+    print()
+    print("=" * 92)
+    print(
+        "TCP CARLA <-> HE REPEATABILITY ANALYSIS V1"
+    )
+    print("=" * 92)
+
+    print(
+        "Scenario:",
+        args.scenario,
+    )
+
+    print(
+        "Pairs:",
+        args.repeats,
     )
 
     print()
-    print("DIRECTION CONSISTENCY")
-    print("-" * 100)
 
     print(
-        "HE stopped closer than CARLA :",
-        f"{lower_count}/{len(valid_gap_deltas)} pairs",
+        "Sustained brake time [s]"
     )
 
     print(
-        "HE stopped farther than CARLA:",
-        f"{higher_count}/{len(valid_gap_deltas)} pairs",
-    )
-
-
-    carla_collisions = sum(
-        int(
-            r["carla"][
-                "collision"
+        "  CARLA:",
+        fmt_mean_std(
+            condition_stats[
+                "sustained_brake_s"
+            ][
+                "carla"
             ]
-        )
-        for r in results
+        ),
     )
 
-    he_collisions = sum(
-        int(
-            r["he"][
-                "collision"
+    print(
+        "  HE   :",
+        fmt_mean_std(
+            condition_stats[
+                "sustained_brake_s"
+            ][
+                "he"
             ]
-        )
-        for r in results
-    )
-
-    print()
-    print("SAFETY OUTCOME")
-    print("-" * 100)
-
-    print(
-        f"CARLA collisions: "
-        f"{carla_collisions}/{len(results)}"
+        ),
     )
 
     print(
-        f"HE collisions   : "
-        f"{he_collisions}/{len(results)}"
+        "  HE-C :",
+        fmt_mean_std(
+            condition_stats[
+                "sustained_brake_s"
+            ][
+                "he_minus_carla"
+            ]
+        ),
     )
 
     print()
-    print("=" * 100)
+
+    print(
+        "Minimum bumper gap [m]"
+    )
+
+    print(
+        "  CARLA:",
+        fmt_mean_std(
+            condition_stats[
+                "minimum_gap_m"
+            ][
+                "carla"
+            ]
+        ),
+    )
+
+    print(
+        "  HE   :",
+        fmt_mean_std(
+            condition_stats[
+                "minimum_gap_m"
+            ][
+                "he"
+            ]
+        ),
+    )
+
+    print(
+        "  HE-C :",
+        fmt_mean_std(
+            condition_stats[
+                "minimum_gap_m"
+            ][
+                "he_minus_carla"
+            ]
+        ),
+    )
+
+    print()
+
+    full = paired_window_stats[
+        "full"
+    ]
+
+    early = paired_window_stats[
+        "frames_0_20"
+    ]
+
+    print(
+        "Early first-20-frame agreement"
+    )
+
+    print(
+        "  steer MAE:",
+        fmt_mean_std(
+            early[
+                "tcp_steer"
+            ][
+                "mae"
+            ]
+        ),
+    )
+
+    print(
+        "  speed MAE:",
+        fmt_mean_std(
+            early[
+                "ego_speed_mps"
+            ][
+                "mae"
+            ]
+        ),
+        "m/s",
+    )
+
+    print(
+        "  gap MAE:",
+        fmt_mean_std(
+            early[
+                "bumper_gap_m"
+            ][
+                "mae"
+            ]
+        ),
+        "m",
+    )
+
+    print(
+        "  brake agreement:",
+        fmt_mean_std(
+            early[
+                "brake_decision"
+            ][
+                "agreement_fraction"
+            ]
+        ),
+    )
+
+    print()
+
+    print(
+        "Full closed-loop pair differences"
+    )
+
+    print(
+        "  steer MAE:",
+        fmt_mean_std(
+            full[
+                "tcp_steer"
+            ][
+                "mae"
+            ]
+        ),
+    )
+
+    print(
+        "  throttle MAE:",
+        fmt_mean_std(
+            full[
+                "tcp_throttle"
+            ][
+                "mae"
+            ]
+        ),
+    )
+
+    print(
+        "  brake MAE:",
+        fmt_mean_std(
+            full[
+                "tcp_brake"
+            ][
+                "mae"
+            ]
+        ),
+    )
+
+    print(
+        "  speed MAE:",
+        fmt_mean_std(
+            full[
+                "ego_speed_mps"
+            ][
+                "mae"
+            ]
+        ),
+        "m/s",
+    )
+
+    print(
+        "  gap MAE:",
+        fmt_mean_std(
+            full[
+                "bumper_gap_m"
+            ][
+                "mae"
+            ]
+        ),
+        "m",
+    )
+
+    print(
+        "  brake agreement:",
+        fmt_mean_std(
+            full[
+                "brake_decision"
+            ][
+                "agreement_fraction"
+            ]
+        ),
+    )
+
+    print(
+        "  ego XY mean divergence:",
+        fmt_mean_std(
+            full[
+                "ego_xy_trajectory"
+            ][
+                "mean_m"
+            ]
+        ),
+        "m",
+    )
+
+    print()
+
+    print(
+        "Collisions CARLA:",
+        carla_collision_count,
+        "/",
+        args.repeats,
+    )
+
+    print(
+        "Collisions HE:",
+        he_collision_count,
+        "/",
+        args.repeats,
+    )
+
+    print(
+        "Outcome agreement:",
+        outcome_agreement_count,
+        "/",
+        args.repeats,
+    )
+
+    print()
+
+    print(
+        "JSON:",
+        output_json,
+    )
+
+    print(
+        "CSV :",
+        output_csv,
+    )
+
+    print("=" * 92)
 
 
 if __name__ == "__main__":
+
     main()

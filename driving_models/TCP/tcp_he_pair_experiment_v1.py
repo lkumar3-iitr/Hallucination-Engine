@@ -89,7 +89,30 @@ from tcp_carla_0915_closed_loop import (
     make_bootstrap_result,
 )
 
+# ============================================================
+# Shared deterministic CARLA ego initialization
+# ============================================================
 
+COMMON_DIR = (
+    HE_ROOT
+    / "driving_models"
+    / "common"
+)
+
+if str(COMMON_DIR) not in sys.path:
+    sys.path.insert(
+        0,
+        str(COMMON_DIR),
+    )
+
+from carla_ego_initialization import (
+    canonicalize_ego_start,
+)
+
+from he_camera_renderer import (
+    render_he_actor_view_matrix,
+    load_view_matrix_sprite_bank,
+)
 # ============================================================
 # Existing validated HE compositor utilities
 # ============================================================
@@ -142,7 +165,420 @@ DEFAULT_OUTPUT_ROOT = (
 # ============================================================
 # Basic utilities
 # ============================================================
+def ensure_dir(path):
+    Path(path).mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    return path
 
+
+def image_to_rgb_array(image):
+    array = np.frombuffer(
+        image.raw_data,
+        dtype=np.uint8,
+    )
+    array = array.reshape(
+        (
+            image.height,
+            image.width,
+            4,
+        )
+    )
+    rgb = array[:, :, :3][:, :, ::-1]  # BGRA -> RGB
+    return rgb
+
+
+def decode_instance_segmentation(image):
+    """
+    Decode CARLA instance-segmentation raw BGRA image.
+
+    raw_data byte order:
+        B = channel 0
+        G = channel 1
+        R = channel 2
+
+    CARLA encoding:
+        R -> semantic class
+        G/B -> instance identifier
+    """
+    array = np.frombuffer(
+        image.raw_data,
+        dtype=np.uint8,
+    )
+
+    array = array.reshape(
+        (
+            image.height,
+            image.width,
+            4,
+        )
+    )
+
+    blue = array[:, :, 0].astype(
+        np.uint16
+    )
+
+    green = array[:, :, 1].astype(
+        np.uint16
+    )
+
+    red = array[:, :, 2].astype(
+        np.uint8
+    )
+
+    instance_id = (
+        green
+        + (blue << 8)
+    )
+
+    return (
+        red,
+        instance_id,
+    )
+
+
+def make_instance_camera_from_parent_rgb(
+    world,
+    ego,
+    parent_rgb_camera,
+):
+    """
+    Spawn an instance-segmentation camera with exactly the
+    TCP-native camera intrinsics and relative mounting pose.
+
+    TCP native camera:
+        900x256
+        FOV 100
+        x=-1.5, y=0.0, z=2.0
+    """
+
+    camera_bp = (
+        world
+        .get_blueprint_library()
+        .find(
+            "sensor.camera.instance_segmentation"
+        )
+    )
+
+    camera_bp.set_attribute(
+        "image_size_x",
+        parent_rgb_camera.attributes.get(
+            "image_size_x",
+            "900",
+        ),
+    )
+
+    camera_bp.set_attribute(
+        "image_size_y",
+        parent_rgb_camera.attributes.get(
+            "image_size_y",
+            "256",
+        ),
+    )
+
+    camera_bp.set_attribute(
+        "fov",
+        parent_rgb_camera.attributes.get(
+            "fov",
+            "100",
+        ),
+    )
+
+    # IMPORTANT:
+    # This transform is RELATIVE to the ego because
+    # attach_to=ego is used.
+    camera_tf = carla.Transform(
+        carla.Location(
+            x=-1.5,
+            y=0.0,
+            z=2.0,
+        ),
+        carla.Rotation(
+            pitch=0.0,
+            yaw=0.0,
+            roll=0.0,
+        ),
+    )
+
+    camera = world.spawn_actor(
+        camera_bp,
+        camera_tf,
+        attach_to=ego,
+    )
+
+    return camera
+
+
+def mask_geometry_from_binary(mask_u8):
+    """
+    mask_u8: uint8 image, 0/255
+    """
+    ys, xs = np.where(mask_u8 > 0)
+
+    if len(xs) == 0:
+        return {
+            "visible": False,
+            "x1": None,
+            "y1": None,
+            "x2": None,
+            "y2": None,
+            "width": 0,
+            "height": 0,
+            "cx": None,
+            "bottom_y": None,
+            "area": 0,
+        }
+
+    x1 = int(xs.min())
+    x2 = int(xs.max())
+    y1 = int(ys.min())
+    y2 = int(ys.max())
+
+    width = int(x2 - x1 + 1)
+    height = int(y2 - y1 + 1)
+    area = int((mask_u8 > 0).sum())
+
+    return {
+        "visible": True,
+        "x1": x1,
+        "y1": y1,
+        "x2": x2,
+        "y2": y2,
+        "width": width,
+        "height": height,
+        "cx": 0.5 * (x1 + x2),
+        "bottom_y": float(y2),
+        "area": area,
+    }
+
+
+def extract_vehicle_instance_mask_from_bbox(
+    instance_image,
+    projected_bbox,
+    semantic_tags,
+):
+    """
+    Same logic as record_carla_he_pair.py, adapted locally.
+
+    We identify the target actor instance using:
+      1. semantic tags
+      2. projected bbox crop
+      3. dominant instance id inside the crop
+    """
+    semantic_id, instance_id = decode_instance_segmentation(
+        instance_image
+    )
+
+    height, width = semantic_id.shape
+
+    target_semantic_tags = {
+        int(tag)
+        for tag in semantic_tags
+    }
+
+    if not target_semantic_tags:
+        return (
+            np.zeros(
+                (height, width),
+                dtype=np.uint8,
+            ),
+            {
+                "found": False,
+                "reason": "actor_has_no_semantic_tags",
+            },
+        )
+
+    if not projected_bbox.get(
+        "visible",
+        False,
+    ):
+        return (
+            np.zeros(
+                (height, width),
+                dtype=np.uint8,
+            ),
+            {
+                "found": False,
+                "reason": "projected_bbox_not_visible",
+                "expected_semantic_tags": sorted(
+                    target_semantic_tags
+                ),
+            },
+        )
+
+    x1 = max(
+        0,
+        int(np.floor(projected_bbox["x1"])),
+    )
+    y1 = max(
+        0,
+        int(np.floor(projected_bbox["y1"])),
+    )
+    x2 = min(
+        width - 1,
+        int(np.ceil(projected_bbox["x2"])),
+    )
+    y2 = min(
+        height - 1,
+        int(np.ceil(projected_bbox["y2"])),
+    )
+
+    if x2 < x1 or y2 < y1:
+        return (
+            np.zeros(
+                (height, width),
+                dtype=np.uint8,
+            ),
+            {
+                "found": False,
+                "reason": "invalid_projected_bbox_crop",
+                "expected_semantic_tags": sorted(
+                    target_semantic_tags
+                ),
+            },
+        )
+
+    crop_semantic = semantic_id[
+        y1:y2 + 1,
+        x1:x2 + 1,
+    ]
+    crop_instance = instance_id[
+        y1:y2 + 1,
+        x1:x2 + 1,
+    ]
+
+    candidate_pixels = np.isin(
+        crop_semantic,
+        list(target_semantic_tags),
+    )
+
+    if not candidate_pixels.any():
+        return (
+            np.zeros(
+                (height, width),
+                dtype=np.uint8,
+            ),
+            {
+                "found": False,
+                "reason": "no_target_semantic_pixels_in_projected_bbox",
+                "expected_semantic_tags": sorted(
+                    target_semantic_tags
+                ),
+                "bbox_crop": {
+                    "x1": x1,
+                    "y1": y1,
+                    "x2": x2,
+                    "y2": y2,
+                },
+            },
+        )
+
+    candidate_instance_values = crop_instance[
+        candidate_pixels
+    ]
+
+    unique_ids, counts = np.unique(
+        candidate_instance_values,
+        return_counts=True,
+    )
+
+    # remove instance id 0 if present
+    keep = unique_ids != 0
+    unique_ids = unique_ids[keep]
+    counts = counts[keep]
+
+    if len(unique_ids) == 0:
+        return (
+            np.zeros(
+                (height, width),
+                dtype=np.uint8,
+            ),
+            {
+                "found": False,
+                "reason": "only_background_instance_ids",
+                "expected_semantic_tags": sorted(
+                    target_semantic_tags
+                ),
+                "bbox_crop": {
+                    "x1": x1,
+                    "y1": y1,
+                    "x2": x2,
+                    "y2": y2,
+                },
+            },
+        )
+
+    selected_instance_id = int(
+        unique_ids[np.argmax(counts)]
+    )
+
+    full_mask = np.logical_and(
+        np.isin(
+            semantic_id,
+            list(target_semantic_tags),
+        ),
+        instance_id == selected_instance_id,
+    )
+
+    mask_u8 = np.zeros(
+        (height, width),
+        dtype=np.uint8,
+    )
+    mask_u8[full_mask] = 255
+
+    return (
+        mask_u8,
+        {
+            "found": True,
+            "method": "semantic_tag_plus_projected_bbox",
+            "expected_semantic_tags": sorted(
+                target_semantic_tags
+            ),
+            "selected_instance_id": selected_instance_id,
+            "pixels_in_projected_bbox": int(
+                candidate_pixels.sum()
+            ),
+            "mask_pixels": int(
+                full_mask.sum()
+            ),
+            "bbox_crop": {
+                "x1": x1,
+                "y1": y1,
+                "x2": x2,
+                "y2": y2,
+            },
+        },
+    )
+
+
+def write_binary_mask_png(mask_u8, out_path):
+    ensure_dir(
+        Path(out_path).parent
+    )
+    ok = cv2.imwrite(
+        str(out_path),
+        mask_u8,
+    )
+    if not ok:
+        raise RuntimeError(
+            f"Failed to write mask: {out_path}"
+        )
+
+
+def write_rgb_png(rgb, out_path):
+    ensure_dir(
+        Path(out_path).parent
+    )
+    bgr = rgb[:, :, ::-1]
+    ok = cv2.imwrite(
+        str(out_path),
+        bgr,
+    )
+    if not ok:
+        raise RuntimeError(
+            f"Failed to write image: {out_path}"
+        )
 def load_json(path: Path):
     with path.open(
         "r",
@@ -1721,7 +2157,32 @@ def main():
             "he",
         ],
     )
+    parser.add_argument(
+        "--he-bottom-y-offset-px",
+        type=float,
+        default=0.0,
+        help=(
+            "Optional HE sprite vertical placement correction "
+            "in native-camera pixels. Negative moves HE upward."
+        ),
+    )
+    parser.add_argument(
+        "--dump-native-equivalence-v1",
+        action="store_true",
+        help=(
+            "Dump native TCP RGB frames and actor masks for "
+            "CARLA-vs-HE adversary equivalence analysis."
+        ),
+    )
 
+    parser.add_argument(
+        "--dump-native-rgb",
+        action="store_true",
+        help=(
+            "When dumping native equivalence, also save the native TCP RGB "
+            "frame PNG for each probe."
+        ),
+    )
     parser.add_argument(
         "--resolved",
         default=str(
@@ -1810,7 +2271,24 @@ def main():
             DEFAULT_SPRITE_ROOT
         ),
     )
+    parser.add_argument(
+        "--view-matrix-csv",
+        default=None,
+        help=(
+            "Production 4320 sprite-bank "
+            "view_matrix.csv."
+        ),
+    )
 
+    parser.add_argument(
+        "--distance-selection-mode",
+        choices=[
+            "linear",
+            "log",
+            "inverse_depth",
+        ],
+        default="linear",
+    )
     parser.add_argument(
         "--max-frames",
         type=int,
@@ -1886,7 +2364,20 @@ def main():
             ]
         )
 
-    dimensions = (
+    # ========================================================
+    # Actor dimensions
+    #
+    # physical_dimensions:
+    #     true physical footprint used for safety metrics.
+    #
+    # render_dimensions:
+    #     visual proxy dimensions used only by HE projection.
+    #
+    # These must not be conflated. CARLA's full 3-D bounding
+    # box does not necessarily equal the visible 2-D silhouette.
+    # ========================================================
+
+    physical_dimensions = (
         actor_info.get(
             "dimensions_m"
         )
@@ -1901,6 +2392,24 @@ def main():
             "height_m":
                 1.5,
         }
+    )
+
+    render_dimensions = (
+        actor_info.get(
+            "render_dimensions_m"
+        )
+        or
+        physical_dimensions
+    )
+
+    print(
+        "[physical dimensions]",
+        physical_dimensions,
+    )
+
+    print(
+        "[render dimensions]",
+        render_dimensions,
     )
 
     blueprint_name = (
@@ -2022,31 +2531,53 @@ def main():
     )
 
     # ========================================================
-    # HE sprite bank
+    # Production HE 4320 view-matrix bank
     # ========================================================
 
-    sprite_bank = {
-        "root":
-            str(
-                Path(
-                    args.sprite_root
-                ).resolve()
-            ),
-
-        "rgba_dir":
-            "rgba",
-
-        "angle_format":
-            "angle_{angle:03d}_rgba.png",
-    }
-
+    sprite_bank = None
+    view_matrix = None
     sprite_cache = None
-    available_angles = None
 
     if args.condition == "he":
 
-        available_angles = (
-            discover_available_sprite_angles(
+        if args.view_matrix_csv is None:
+            raise RuntimeError(
+                "--view-matrix-csv is required "
+                "for HE condition."
+            )
+
+        view_matrix_csv = Path(
+            args.view_matrix_csv
+        ).resolve()
+
+        sprite_bank = {
+            "mode":
+                "view_matrix",
+
+            "view_matrix_csvs": [
+                str(
+                    view_matrix_csv
+                )
+            ],
+
+            "target_height_m":
+                0.75,
+
+            # actor state comes from the actual TCP
+            # camera/world geometry.
+            "vertical_mode":
+                "state_y",
+
+            # Informational here because state_y is used.
+            "camera_height_m":
+                2.0,
+
+            "distance_selection_mode":
+                args.distance_selection_mode,
+        }
+
+        view_matrix = (
+            load_view_matrix_sprite_bank(
                 sprite_bank
             )
         )
@@ -2056,17 +2587,22 @@ def main():
         )
 
         print(
-            "[HE sprites]",
-            sprite_bank[
-                "root"
-            ],
+            "[HE view matrix]",
+            view_matrix_csv,
         )
 
         print(
-            "[HE angles]",
+            "[HE views]",
             len(
-                available_angles
+                view_matrix[
+                    "records"
+                ]
             ),
+        )
+
+        print(
+            "[HE distance mode]",
+            args.distance_selection_mode,
         )
 
     # ========================================================
@@ -2087,6 +2623,56 @@ def main():
         parents=True,
         exist_ok=True,
     )
+
+    # ========================================================
+    # Native CARLA <-> HE adversary equivalence dumps
+    # ========================================================
+
+    native_equiv_dirs = None
+    native_equiv_jsonl_path = None
+    native_equiv_jsonl_fp = None
+
+    if args.dump_native_equivalence_v1:
+
+        native_equiv_root = (
+            output_dir
+            / "native_equivalence_v1"
+            / args.condition
+        )
+
+        native_equiv_dirs = {
+            "root":
+                native_equiv_root,
+
+            "rgb":
+                native_equiv_root
+                / "rgb",
+
+            "masks_carla":
+                native_equiv_root
+                / "masks_carla",
+
+            "masks_he":
+                native_equiv_root
+                / "masks_he",
+        }
+
+        for _path in native_equiv_dirs.values():
+
+            ensure_dir(
+                _path
+            )
+
+        native_equiv_jsonl_path = (
+            native_equiv_root
+            / "native_equivalence_rows.jsonl"
+        )
+
+        native_equiv_jsonl_fp = open(
+            native_equiv_jsonl_path,
+            "w",
+            encoding="utf-8",
+        )
 
     stem = (
         scenario[
@@ -2155,6 +2741,9 @@ def main():
     camera = None
     gnss_sensor = None
     imu_sensor = None
+
+    instance_camera = None
+    instance_camera_queue = None
 
     input_writer = None
     debug_writer = None
@@ -2284,6 +2873,55 @@ def main():
         )
 
         # ====================================================
+        # Deterministic ego initialization
+        #
+        # Every closed-loop model experiment must begin from
+        # the same physically settled and canonical CARLA state.
+        #
+        # Important:
+        # do this BEFORE spawning/listening to sensors so the
+        # settling ticks do not accumulate stale sensor frames.
+        # ====================================================
+
+        (
+            ego0_tf,
+            ego0_state,
+        ) = canonicalize_ego_start(
+            world=world,
+            ego=ego,
+            nominal_spawn_tf=spawn_points[
+                spawn_idx
+            ],
+            settle_ticks=30,
+            hold_ticks=5,
+        )
+
+        print(
+            "[init] canonical ego state ready"
+        )
+        # ====================================================
+        # EXPERIMENT START BARRIER
+        #
+        # No TCP inference, TCP temporal state, or TCP-generated
+        # vehicle control is permitted before this point.
+        # ====================================================
+
+        print(
+            "[init] ========================================"
+        )
+        print(
+            "[init] EXPERIMENT START BARRIER"
+        )
+        print(
+            "[init] ego settled and canonicalized"
+        )
+        print(
+            "[init] model history is empty"
+        )
+        print(
+            "[init] ========================================"
+        )
+        # ====================================================
         # TCP native sensors
         # ====================================================
 
@@ -2337,84 +2975,38 @@ def main():
         imu_sensor.listen(
             imu_queue.put
         )
-
         # ====================================================
-        # Stabilize ego
+        # Native TCP instance-segmentation camera
+        #
+        # Diagnostic only. It does not affect TCP input.
         # ====================================================
 
-        hold_control = (
-            carla.VehicleControl(
-                throttle=0.0,
-                steer=0.0,
-                brake=1.0,
-                hand_brake=True,
-            )
-        )
+        if (
+            args.dump_native_equivalence_v1
+            and
+            args.condition == "carla"
+        ):
 
-        print(
-            "[init] stabilizing ego..."
-        )
-
-        for _ in range(5):
-
-            ego.apply_control(
-                hold_control
+            instance_camera = (
+                make_instance_camera_from_parent_rgb(
+                    world=world,
+                    ego=ego,
+                    parent_rgb_camera=camera,
+                )
             )
 
-            frame = (
-                world.tick()
+            instance_camera_queue = (
+                queue.Queue()
             )
 
-            get_named_sensor_frame(
-                camera_queue,
-                frame,
-                "RGB camera",
+            instance_camera.listen(
+                instance_camera_queue.put
             )
 
-            get_named_sensor_frame(
-                gnss_queue,
-                frame,
-                "GNSS",
+            print(
+                "[native equivalence] "
+                "instance camera enabled"
             )
-
-            get_named_sensor_frame(
-                imu_queue,
-                frame,
-                "IMU",
-            )
-
-        # Exact common initial state.
-
-        ego.set_transform(
-            spawn_points[
-                spawn_idx
-            ]
-        )
-
-        ego.set_target_velocity(
-            carla.Vector3D(
-                0.0,
-                0.0,
-                0.0,
-            )
-        )
-
-        ego.set_target_angular_velocity(
-            carla.Vector3D(
-                0.0,
-                0.0,
-                0.0,
-            )
-        )
-
-        ego.apply_control(
-            hold_control
-        )
-
-        ego0_tf = (
-            ego.get_transform()
-        )
-
         # ====================================================
         # CARLA adversary condition
         # ====================================================
@@ -2535,7 +3127,17 @@ def main():
                 "IMU",
             )
         )
+        current_instance_image = None
 
+        if instance_camera_queue is not None:
+
+            current_instance_image = (
+                get_named_sensor_frame(
+                    instance_camera_queue,
+                    current_frame,
+                    "instance camera",
+                )
+            )
         # ====================================================
         # Video
         # ====================================================
@@ -2667,10 +3269,12 @@ def main():
         # Runtime state
         # ====================================================
 
+        # TCP temporal/model runtime state begins only after
+        # physical CARLA initialization has completed.
+
         fusion = (
             TCPFusionState()
         )
-
         route_idx = 0
         deviation_counter = 0
 
@@ -2766,10 +3370,15 @@ def main():
             # Only experimental difference
             # ------------------------------------------------
 
-            if args.condition == "he":
+            # ------------------------------------------------
+            # Only experimental difference
+            # ------------------------------------------------
 
+            he_mask_u8 = None
+
+            if args.condition == "he":
                 tcp_rgb, he_meta = (
-                    render_he_actor(
+                    render_he_actor_view_matrix(
                         base_rgb=
                             base_rgb,
 
@@ -2780,19 +3389,173 @@ def main():
                             current_image.transform,
 
                         dimensions=
-                            dimensions,
+                            render_dimensions,
 
                         sprite_bank=
                             sprite_bank,
 
-                        available_angles=
-                            available_angles,
+                        view_matrix=
+                            view_matrix,
 
                         sprite_cache=
                             sprite_cache,
+
+                        width=
+                            900,
+
+                        height=
+                            256,
+
+                        fov=
+                            100.0,
+                        bottom_y_offset_px=
+                            args.he_bottom_y_offset_px,                        
                     )
                 )
+                # --------------------------------------------
+                # Diagnostic HE alpha-mask reconstruction
+                #
+                # Render the identical actor onto black and
+                # white backgrounds. From:
+                #
+                #   O = alpha * F + (1-alpha) * B
+                #
+                # white_render - black_render
+                #     = 255 * (1-alpha)
+                #
+                # Therefore the actor alpha can be recovered
+                # without modifying the frozen renderer.
+                # --------------------------------------------
 
+                if args.dump_native_equivalence_v1:
+
+                    black_background = (
+                        np.zeros_like(
+                            base_rgb
+                        )
+                    )
+
+                    white_background = (
+                        np.full_like(
+                            base_rgb,
+                            255,
+                        )
+                    )
+
+                    (
+                        he_black,
+                        _he_black_meta,
+                    ) = (
+                        render_he_actor_view_matrix(
+                            base_rgb=
+                                black_background,
+
+                            actor_tf=
+                                actor_tf,
+
+                            camera_tf=
+                                current_image.transform,
+
+                            dimensions=
+                                render_dimensions,
+
+                            sprite_bank=
+                                sprite_bank,
+
+                            view_matrix=
+                                view_matrix,
+
+                            sprite_cache=
+                                sprite_cache,
+
+                            width=
+                                900,
+
+                            height=
+                                256,
+
+                            fov=
+                                100.0,
+                            bottom_y_offset_px=
+                                args.he_bottom_y_offset_px,
+                        )
+                    )
+
+                    (
+                        he_white,
+                        _he_white_meta,
+                    ) = (
+                        render_he_actor_view_matrix(
+                            base_rgb=
+                                white_background,
+
+                            actor_tf=
+                                actor_tf,
+
+                            camera_tf=
+                                current_image.transform,
+
+                            dimensions=
+                                render_dimensions,
+
+                            sprite_bank=
+                                sprite_bank,
+
+                            view_matrix=
+                                view_matrix,
+
+                            sprite_cache=
+                                sprite_cache,
+
+                            width=
+                                900,
+
+                            height=
+                                256,
+
+                            fov=
+                                100.0,
+                            bottom_y_offset_px=
+                                args.he_bottom_y_offset_px,
+                        )
+                    )
+
+                    diff = (
+                        he_white.astype(
+                            np.float32
+                        )
+                        -
+                        he_black.astype(
+                            np.float32
+                        )
+                    )
+
+                    transparency = (
+                        np.mean(
+                            diff,
+                            axis=2,
+                        )
+                        / 255.0
+                    )
+
+                    alpha = (
+                        1.0
+                        -
+                        transparency
+                    )
+
+                    alpha = np.clip(
+                        alpha,
+                        0.0,
+                        1.0,
+                    )
+
+                    he_mask_u8 = np.rint(
+                        alpha
+                        * 255.0
+                    ).astype(
+                        np.uint8
+                    )
             else:
 
                 tcp_rgb = (
@@ -2944,7 +3707,7 @@ def main():
                         actor_frame,
 
                     dimensions=
-                        dimensions,
+                        physical_dimensions,
 
                     ego=
                         ego,
@@ -3034,7 +3797,351 @@ def main():
                     "ttc_s"
                 ]
             )
+            # ------------------------------------------------
+            # Native CARLA <-> HE adversary equivalence dump
+            # ------------------------------------------------
 
+            if args.dump_native_equivalence_v1:
+
+                frame_tag = (
+                    f"{i:06d}"
+                )
+
+                rgb_path = (
+                    native_equiv_dirs[
+                        "rgb"
+                    ]
+                    /
+                    (
+                        frame_tag
+                        + ".png"
+                    )
+                )
+
+                carla_mask_path = (
+                    native_equiv_dirs[
+                        "masks_carla"
+                    ]
+                    /
+                    (
+                        frame_tag
+                        + ".png"
+                    )
+                )
+
+                he_mask_path = (
+                    native_equiv_dirs[
+                        "masks_he"
+                    ]
+                    /
+                    (
+                        frame_tag
+                        + ".png"
+                    )
+                )
+
+                # Exact RGB image supplied to TCP.
+                if args.dump_native_rgb:
+
+                    write_rgb_png(
+                        tcp_rgb,
+                        rgb_path,
+                    )
+
+                native_row = {
+                    "probe_idx":
+                        int(i),
+
+                    "carla_frame":
+                        int(
+                            current_frame
+                        ),
+
+                    "t_s":
+                        float(
+                            actor_frame[
+                                "t_s"
+                            ]
+                        ),
+
+                    "condition":
+                        args.condition,
+
+                    "rgb_path":
+                        (
+                            str(
+                                rgb_path
+                            )
+                            if args.dump_native_rgb
+                            else None
+                        ),
+
+                    "carla_mask_path":
+                        None,
+
+                    "he_mask_path":
+                        None,
+
+                    "actor_world_x":
+                        float(
+                            actor_tf.location.x
+                        ),
+
+                    "actor_world_y":
+                        float(
+                            actor_tf.location.y
+                        ),
+
+                    "actor_world_z":
+                        float(
+                            actor_tf.location.z
+                        ),
+
+                    "actor_world_yaw":
+                        float(
+                            actor_tf.rotation.yaw
+                        ),
+
+                    "actor_x_sg_m":
+                        float(
+                            actor_frame[
+                                "x_m"
+                            ]
+                        ),
+
+                    "actor_y_sg_m":
+                        float(
+                            actor_frame[
+                                "y_m"
+                            ]
+                        ),
+
+                    "actor_yaw_sg_deg":
+                        float(
+                            actor_frame[
+                                "yaw_deg"
+                            ]
+                        ),
+
+                    "bumper_gap_m":
+                        float(
+                            metrics[
+                                "bumper_gap_m"
+                            ]
+                        ),
+
+                    "ego_speed_mps":
+                        float(
+                            speed_mps
+                        ),
+
+                    "tcp_steer":
+                        float(
+                            tcp[
+                                "steer"
+                            ]
+                        ),
+
+                    "tcp_throttle":
+                        float(
+                            tcp[
+                                "throttle"
+                            ]
+                        ),
+
+                    "tcp_brake":
+                        float(
+                            tcp[
+                                "brake"
+                            ]
+                        ),
+
+                    "carla_mask_geometry":
+                        None,
+
+                    "carla_mask_info":
+                        None,
+
+                    "he_mask_geometry":
+                        None,
+
+                    "he_mask_info":
+                        None,
+                }
+
+                # ============================================
+                # CARLA condition
+                # ============================================
+
+                if args.condition == "carla":
+
+                    carla_mask_u8 = np.zeros(
+                        (
+                            256,
+                            900,
+                        ),
+                        dtype=np.uint8,
+                    )
+
+                    carla_mask_info = {
+                        "found":
+                            False,
+
+                        "reason":
+                            "instance_image_unavailable",
+                    }
+
+                    if (
+                        current_instance_image
+                        is not None
+                        and
+                        adversary is not None
+                    ):
+
+                        projected_bbox_native = (
+                            project_virtual_actor(
+                                actor_tf=
+                                    actor_tf,
+
+                                camera_tf=
+                                    current_image.transform,
+
+                                dimensions=
+                                    physical_dimensions,
+
+                                width=
+                                    900,
+
+                                height=
+                                    256,
+
+                                fov=
+                                    100.0,
+                            )
+                        )
+
+                        semantic_tags = list(
+                            getattr(
+                                adversary,
+                                "semantic_tags",
+                                [],
+                            )
+                        )
+
+                        (
+                            carla_mask_u8,
+                            carla_mask_info,
+                        ) = (
+                            extract_vehicle_instance_mask_from_bbox(
+                                instance_image=
+                                    current_instance_image,
+
+                                projected_bbox=
+                                    projected_bbox_native,
+
+                                semantic_tags=
+                                    semantic_tags,
+                            )
+                        )
+
+                    write_binary_mask_png(
+                        carla_mask_u8,
+                        carla_mask_path,
+                    )
+
+                    native_row[
+                        "carla_mask_path"
+                    ] = str(
+                        carla_mask_path
+                    )
+
+                    native_row[
+                        "carla_mask_geometry"
+                    ] = (
+                        mask_geometry_from_binary(
+                            carla_mask_u8
+                        )
+                    )
+
+                    native_row[
+                        "carla_mask_info"
+                    ] = (
+                        carla_mask_info
+                    )
+
+                # ============================================
+                # HE condition
+                # ============================================
+
+                else:
+
+                    if he_mask_u8 is None:
+
+                        he_mask_u8 = np.zeros(
+                            (
+                                256,
+                                900,
+                            ),
+                            dtype=np.uint8,
+                        )
+
+                    write_binary_mask_png(
+                        he_mask_u8,
+                        he_mask_path,
+                    )
+
+                    native_row[
+                        "he_mask_path"
+                    ] = str(
+                        he_mask_path
+                    )
+
+                    native_row[
+                        "he_mask_geometry"
+                    ] = (
+                        mask_geometry_from_binary(
+                            he_mask_u8
+                        )
+                    )
+
+                    native_row[
+                        "he_mask_info"
+                    ] = {
+                        "found":
+                            bool(
+                                he_meta.get(
+                                    "rendered",
+                                    False,
+                                )
+                            ),
+
+                        "method":
+                            (
+                                "black_white_alpha_reconstruction"
+                            ),
+
+                        "selected_angle":
+                            he_meta.get(
+                                "selected_angle"
+                            ),
+
+                        "viewpoint_angle_deg":
+                            he_meta.get(
+                                "viewpoint_angle_deg"
+                            ),
+
+                        "depth_m":
+                            he_box.get(
+                                "depth_m"
+                            ),
+                    }
+
+                native_equiv_jsonl_fp.write(
+                    json.dumps(
+                        native_row
+                    )
+                    + "\n"
+                )
             writer.writerow({
                 "condition":
                     args.condition,
@@ -3509,7 +4616,17 @@ def main():
                     "IMU",
                 )
             )
+            current_instance_image = None
 
+            if instance_camera_queue is not None:
+
+                current_instance_image = (
+                    get_named_sensor_frame(
+                        instance_camera_queue,
+                        current_frame,
+                        "instance camera",
+                    )
+                )
         # ====================================================
         # Complete
         # ====================================================
@@ -3589,7 +4706,9 @@ def main():
 
         if csv_file is not None:
             csv_file.close()
+        if native_equiv_jsonl_fp is not None:
 
+            native_equiv_jsonl_fp.close()
         if input_writer is not None:
             input_writer.release()
 
@@ -3603,7 +4722,14 @@ def main():
                 pass
 
             camera.destroy()
+        if instance_camera is not None:
 
+            try:
+                instance_camera.stop()
+            except Exception:
+                pass
+
+            instance_camera.destroy()
         if gnss_sensor is not None:
             try:
                 gnss_sensor.stop()

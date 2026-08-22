@@ -321,14 +321,18 @@ def canonicalize_ego_start(
     )
 
     # ========================================================
-    # Release brake without ticking.
+    # Remain fully held at the experiment-start barrier.
     #
-    # Therefore no uncontrolled motion occurs between the
-    # canonical-state measurement and experiment frame 0.
+    # No model observation, temporal state, or controller
+    # output has occurred before this point.
+    #
+    # The experiment runner will replace this hold control with
+    # the model's first prescribed control before advancing the
+    # closed-loop experiment.
     # ========================================================
 
     ego.apply_control(
-        neutral_control
+        hold_control
     )
 
     return (

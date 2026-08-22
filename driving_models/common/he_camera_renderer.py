@@ -35,9 +35,35 @@ import sys
 from pathlib import Path
 
 import cv2
-import carla
 import numpy as np
+import carla
 
+
+# ============================================================
+# HE runtime modules
+# ============================================================
+
+THIS_FILE = Path(__file__).resolve()
+HE_ROOT = THIS_FILE.parents[2]
+
+HE_RUNTIME_DIR = (
+    HE_ROOT
+    / "HE_v_0.1"
+)
+
+if str(HE_RUNTIME_DIR) not in sys.path:
+    sys.path.insert(
+        0,
+        str(HE_RUNTIME_DIR),
+    )
+
+
+from run_he_temporal_compositor_v2 import (
+    load_view_matrix_sprite_bank,
+    select_view_matrix_sprite,
+    warp_view_matrix_sprite_to_box_subpixel,
+    alpha_composite_rgb,
+)
 
 # ============================================================
 # HE runtime
@@ -796,7 +822,12 @@ def project_virtual_actor(
                     "camera_right_m"
                 ]
             ),
-
+        "camera_up_m":
+            float(
+                center_projection[
+                    "camera_up_m"
+                ]
+            ),
         "actor_relative_yaw_deg":
             actor_relative_yaw,
 
@@ -1461,6 +1492,384 @@ def render_he_actor(
                     "scale_y"
                 ]
             ),
+    })
+
+    return (
+        frame,
+        meta,
+    )
+
+# ============================================================
+# Production 4320 view-matrix renderer
+# ============================================================
+
+def render_he_actor_view_matrix(
+    base_rgb,
+    actor_tf,
+    camera_tf,
+    dimensions,
+    sprite_bank,
+    view_matrix,
+    sprite_cache,
+    width,
+    height,
+    fov,
+    bottom_y_offset_px=0.0,
+):
+
+    frame = (
+        base_rgb.copy()
+    )
+
+    # --------------------------------------------------------
+    # Native-camera metric projection
+    # --------------------------------------------------------
+
+    box = project_virtual_actor(
+        actor_tf=actor_tf,
+        camera_tf=camera_tf,
+        dimensions=dimensions,
+        width=width,
+        height=height,
+        fov=fov,
+    )
+
+    meta = {
+        "rendered":
+            False,
+
+        "box":
+            box,
+
+        "sprite_mode":
+            "view_matrix",
+
+        "selected_angle":
+            None,
+
+        "angle_error_deg":
+            None,
+
+        "viewpoint_angle_deg":
+            None,
+
+        "selected_distance_m":
+            None,
+
+        "query_distance_m":
+            None,
+
+        "selected_elevation_deg":
+            None,
+
+        "query_elevation_deg":
+            None,
+    }
+
+    if not box.get(
+        "visible",
+        False,
+    ):
+        return (
+            frame,
+            meta,
+        )
+    # --------------------------------------------------------
+    # Optional camera-specific vertical placement calibration.
+    #
+    # Positive = move sprite downward.
+    # Negative = move sprite upward.
+    #
+    # This changes only final image placement. It does NOT
+    # modify actor/world geometry, depth, TTC, or safety metrics.
+    # --------------------------------------------------------
+
+    render_bottom_y = (
+        float(
+            box[
+                "bottom_y"
+            ]
+        )
+        +
+        float(
+            bottom_y_offset_px
+        )
+    )
+
+    meta[
+        "bottom_y_offset_px"
+    ] = float(
+        bottom_y_offset_px
+    )
+
+    meta[
+        "render_bottom_y"
+    ] = float(
+        render_bottom_y
+    )
+    # --------------------------------------------------------
+    # Camera-relative state expected by the production
+    # view-matrix selector.
+    # --------------------------------------------------------
+
+    state = {
+        "x_m":
+            float(
+                box[
+                    "camera_right_m"
+                ]
+            ),
+
+        "y_m":
+            float(
+                box[
+                    "camera_up_m"
+                ]
+            ),
+
+        "z_m":
+            float(
+                box[
+                    "depth_m"
+                ]
+            ),
+
+        "yaw_deg":
+            float(
+                box[
+                    "actor_relative_yaw_deg"
+                ]
+            ),
+    }
+
+    # --------------------------------------------------------
+    # Frozen 4320 selector:
+    #
+    # viewpoint x distance x elevation
+    # --------------------------------------------------------
+
+    sprite_info = (
+        select_view_matrix_sprite(
+            state=state,
+            sprite_bank=sprite_bank,
+            view_matrix=view_matrix,
+        )
+    )
+
+    if not sprite_info.get(
+        "exists",
+        False,
+    ):
+        meta[
+            "reason"
+        ] = "sprite_not_found"
+
+        return (
+            frame,
+            meta,
+        )
+
+    sprite_rgba = (
+        sprite_cache.load_rgba(
+            sprite_info[
+                "sprite_path"
+            ]
+        )
+    )
+
+    # --------------------------------------------------------
+    # Frozen stable subpixel renderer.
+    #
+    # Appearance:
+    #     selected 4320 sprite
+    #
+    # Final geometry:
+    #     native-camera metric projection above
+    # --------------------------------------------------------
+
+    (
+        warped_rgba,
+        resize_info,
+    ) = warp_view_matrix_sprite_to_box_subpixel(
+        sprite_rgba=sprite_rgba,
+
+        frame_w=width,
+        frame_h=height,
+
+        target_cx=
+            box[
+                "cx"
+            ],
+
+        target_bottom_y=
+            render_bottom_y,
+
+        target_box_w=
+            box[
+                "box_width"
+            ],
+
+        target_box_h=
+            box[
+                "box_height"
+            ],
+
+        anchor_x=
+            sprite_info[
+                "anchor_x"
+            ],
+
+        anchor_y=
+            sprite_info[
+                "anchor_y"
+            ],
+
+        alpha_threshold=10,
+    )
+
+    if resize_info.get(
+        "fully_outside_frame",
+        False,
+    ):
+
+        meta[
+            "reason"
+        ] = "fully_outside_frame"
+
+        return (
+            frame,
+            meta,
+        )
+
+    paste = (
+        resize_info[
+            "paste"
+        ]
+    )
+
+    (
+        frame,
+        full_mask,
+    ) = alpha_composite_rgb(
+        frame_rgb=frame,
+        sprite_rgba=warped_rgba,
+        x1=int(
+            paste[
+                "x1"
+            ]
+        ),
+        y1=int(
+            paste[
+                "y1"
+            ]
+        ),
+        global_alpha=1.0,
+    )
+
+    rendered = bool(
+        np.any(
+            full_mask > 0
+        )
+    )
+
+    meta.update({
+        "rendered":
+            rendered,
+
+        "viewpoint_angle_deg":
+            float(
+                sprite_info[
+                    "relative_angle_deg"
+                ]
+            ),
+
+        "selected_angle":
+            int(
+                sprite_info[
+                    "selected_angle"
+                ]
+            ),
+
+        "angle_error_deg":
+            float(
+                sprite_info[
+                    "angle_error_deg"
+                ]
+            ),
+
+        "query_distance_m":
+            float(
+                sprite_info[
+                    "query_distance_m"
+                ]
+            ),
+
+        "selected_distance_m":
+            float(
+                sprite_info[
+                    "selected_distance_m"
+                ]
+            ),
+
+        "query_elevation_deg":
+            float(
+                sprite_info[
+                    "query_elevation_deg"
+                ]
+            ),
+
+        "selected_elevation_deg":
+            float(
+                sprite_info[
+                    "selected_elevation_deg"
+                ]
+            ),
+
+        "distance_selection_mode":
+            sprite_info[
+                "distance_selection_mode"
+            ],
+
+        "sprite_path":
+            sprite_info[
+                "sprite_path"
+            ],
+
+        "render_transform_mode":
+            resize_info[
+                "mode"
+            ],
+
+        "sprite_width":
+            int(
+                paste[
+                    "sprite_width"
+                ]
+            ),
+
+        "sprite_height":
+            int(
+                paste[
+                    "sprite_height"
+                ]
+            ),
+
+        "paste_x1":
+            int(
+                paste[
+                    "x1"
+                ]
+            ),
+
+        "paste_y1":
+            int(
+                paste[
+                    "y1"
+                ]
+            ),
+
+        "resize_info":
+            resize_info,
     })
 
     return (

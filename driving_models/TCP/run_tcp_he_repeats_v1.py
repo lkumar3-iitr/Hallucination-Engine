@@ -1,327 +1,148 @@
 """
 run_tcp_he_repeats_v1.py
 
-Repeated paired TCP experiment.
+Repeated fresh-process TCP CARLA <-> HE experiments.
 
-Runs:
-    CARLA-01 -> HE-01
-    CARLA-02 -> HE-02
+Each CARLA or HE condition is executed in a completely fresh
+Python process.
+
+Execution order alternates:
+
+    pair 01: CARLA -> HE
+    pair 02: HE -> CARLA
+    pair 03: CARLA -> HE
     ...
 
-Each execution is a fresh Python process, therefore:
-    - fresh TCP model
-    - fresh TCP PID/controller state
-    - fresh CARLA actors/sensors
+This reduces systematic condition-order bias.
 
-The underlying pair runner is NOT modified.
+After every pair:
+    analyze_tcp_cutin_pair_v1.py
 
-Outputs from every run are copied into a permanent repeat folder
-before the next execution overwrites the normal working outputs.
+After all pairs:
+    analyze_tcp_he_repeats_v1.py
 """
 
+from __future__ import annotations
+
 import argparse
-import shutil
+import json
 import subprocess
 import sys
 from pathlib import Path
 
 
 THIS_FILE = Path(__file__).resolve()
-TCP_DIR = THIS_FILE.parent
 HE_ROOT = THIS_FILE.parents[2]
 
-PAIR_SCRIPT = (
-    TCP_DIR
+
+RUNNER = (
+    HE_ROOT
+    / "driving_models"
+    / "TCP"
     / "tcp_he_pair_experiment_v1.py"
 )
 
-SCENARIO_ID = None
-WORKING_OUTPUT = None
-REPEAT_ROOT = None
+
+PAIR_ANALYZER = (
+    HE_ROOT
+    / "driving_models"
+    / "TCP"
+    / "analyze_tcp_cutin_pair_v1.py"
+)
 
 
-def copy_if_exists(src, dst):
-    if not src.exists():
-        return False
-
-    dst.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    shutil.copy2(
-        src,
-        dst,
-    )
-
-    return True
+REPEAT_ANALYZER = (
+    HE_ROOT
+    / "driving_models"
+    / "TCP"
+    / "analyze_tcp_he_repeats_v1.py"
+)
 
 
-def archive_existing_outputs():
-    """
-    Preserve whatever CARLA/HE result currently exists before
-    the repeat experiment begins.
-    """
-
-    snapshot = (
-        REPEAT_ROOT
-        / "_pre_repeat_snapshot"
-    )
-
-    snapshot.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    copied = 0
-
-    for path in WORKING_OUTPUT.glob("*"):
-        if not path.is_file():
-            continue
-
-        dst = (
-            snapshot
-            / path.name
-        )
-
-        shutil.copy2(
-            path,
-            dst,
-        )
-
-        copied += 1
-
-    print(
-        f"[archive] preserved {copied} existing files"
-    )
-
-    print(
-        "[archive]",
-        snapshot,
-    )
+DEFAULT_RESOLVED = (
+    HE_ROOT
+    / "ScenarioGenerator"
+    / "outputs"
+    / "v2_resolved"
+    / "tcp_cutin_001.resolved_v2.json"
+)
 
 
-def expected_files(condition):
-    prefix = (
-        f"{SCENARIO_ID}_{condition}"
-    )
-
-    return [
-        f"{prefix}.csv",
-        f"{prefix}_tcp_input.mp4",
-        f"{prefix}_debug.mp4",
-    ]
+DEFAULT_OUTPUT_ROOT = (
+    HE_ROOT
+    / "driving_models"
+    / "TCP"
+    / "outputs"
+    / "tcp_4320_repeats_v1"
+)
 
 
-def archive_run(
-    condition,
-    run_idx,
-    log_path,
+DEFAULT_VIEW_MATRIX = Path(
+    r"D:\HE_Data"
+    r"\sprite_bank_grabcut"
+    r"\tesla_grabcut_view_matrix_full"
+    r"\view_matrix.csv"
+)
+
+
+def run_command(
+    cmd,
 ):
-    run_dir = (
-        REPEAT_ROOT
-        / f"run_{run_idx:02d}"
-        / condition
-    )
-
-    run_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    copied = []
-
-    for filename in expected_files(
-        condition
-    ):
-        src = (
-            WORKING_OUTPUT
-            / filename
-        )
-
-        dst = (
-            run_dir
-            / filename
-        )
-
-        if copy_if_exists(
-            src,
-            dst,
-        ):
-            copied.append(
-                filename
-            )
-
-    if log_path.exists():
-        shutil.copy2(
-            log_path,
-            run_dir
-            / "console.log",
-        )
-
-    return (
-        run_dir,
-        copied,
-    )
-
-
-def run_condition(
-    condition,
-    run_idx,
-    args,
-):
-    print()
-    print("=" * 78)
-    print(
-        f"RUN {run_idx:02d}/{args.runs:02d} "
-        f"CONDITION={condition.upper()}"
-    )
-    print("=" * 78)
-
-    log_dir = (
-        REPEAT_ROOT
-        / "_logs"
-    )
-
-    log_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    log_path = (
-        log_dir
-        / (
-            f"run_{run_idx:02d}_"
-            f"{condition}.log"
-        )
-    )
-
-    command = [
-        sys.executable,
-        str(PAIR_SCRIPT),
-
-        "--condition",
-        condition,
-
-        "--resolved",
-        args.resolved,
-
-        "--actor-id",
-        args.actor_id,
-
-        "--event-start-s",
-        str(args.event_start_s),
-
-        "--town",
-        args.town,
-
-        "--spawn-index",
-        str(args.spawn_index),
-
-        "--carla-pythonapi",
-        args.carla_pythonapi,
-    ]
 
     print()
+    print("=" * 88)
     print(
-        "[command]",
-        subprocess.list2cmdline(
-            command
+        " ".join(
+            str(x)
+            for x in cmd
+        )
+    )
+    print("=" * 88)
+    print()
+
+    result = subprocess.run(
+        cmd,
+        cwd=str(
+            HE_ROOT
         ),
     )
-    print()
 
-    with log_path.open(
-        "w",
-        encoding="utf-8",
-    ) as log_fp:
+    if result.returncode != 0:
 
-        process = subprocess.Popen(
-            command,
-            cwd=str(HE_ROOT),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-
-        assert (
-            process.stdout
-            is not None
-        )
-
-        for line in process.stdout:
-            print(
-                line,
-                end="",
-            )
-
-            log_fp.write(
-                line
-            )
-
-        return_code = (
-            process.wait()
-        )
-
-    if return_code != 0:
         raise RuntimeError(
-            f"{condition} run {run_idx} failed "
-            f"with exit code {return_code}. "
-            f"See {log_path}"
-        )
-
-    run_dir, copied = archive_run(
-        condition=
-            condition,
-
-        run_idx=
-            run_idx,
-
-        log_path=
-            log_path,
-    )
-
-    print()
-    print(
-        "[saved]",
-        run_dir,
-    )
-
-    for name in copied:
-        print(
-            "        ",
-            name,
+            "Command failed with "
+            f"return code {result.returncode}"
         )
 
 
 def main():
+
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        "--runs",
+        "--repeats",
         type=int,
         default=5,
     )
     parser.add_argument(
-        "--scenario-id",
-        required=True,
+        "--start-pair",
+        type=int,
+        default=1,
+        help=(
+            "First repeat pair to run. "
+            "Useful for resuming an interrupted experiment."
+        ),
     )
-
     parser.add_argument(
         "--resolved",
-        required=True,
+        default=str(
+            DEFAULT_RESOLVED
+        ),
     )
 
     parser.add_argument(
         "--actor-id",
-        required=True,
-    )
-
-    parser.add_argument(
-        "--event-start-s",
-        type=float,
-        default=4.0,
+        default="adv_cutin",
     )
 
     parser.add_argument(
@@ -336,110 +157,477 @@ def main():
     )
 
     parser.add_argument(
+        "--event-start-s",
+        type=float,
+        default=4.0,
+    )
+
+    parser.add_argument(
         "--carla-pythonapi",
         default=(
-            r"E:\Carla\Carla_0.9.15"
-            r"\PythonAPI\carla"
+            r"E:\Carla"
+            r"\Carla_0.9.15"
+            r"\PythonAPI"
+            r"\carla"
         ),
     )
 
     parser.add_argument(
-        "--no-snapshot",
-        action="store_true",
+        "--view-matrix-csv",
+        default=str(
+            DEFAULT_VIEW_MATRIX
+        ),
+    )
+
+    parser.add_argument(
+        "--distance-selection-mode",
+        choices=[
+            "linear",
+            "log",
+            "inverse_depth",
+        ],
+        default="linear",
+    )
+    parser.add_argument(
+        "--he-bottom-y-offset-px",
+        type=float,
+        default=0.0,
+        help=(
+            "HE native-camera vertical placement correction. "
+            "Negative moves the HE actor upward."
+        ),
+    )
+    parser.add_argument(
+        "--output-root",
+        default=str(
+            DEFAULT_OUTPUT_ROOT
+        ),
     )
 
     args = parser.parse_args()
-    global SCENARIO_ID
-    global WORKING_OUTPUT
-    global REPEAT_ROOT
-
-    SCENARIO_ID = (
-        args.scenario_id
-    )
-
-    WORKING_OUTPUT = (
-        TCP_DIR
-        / "outputs"
-        / "tcp_he_pair_v1"
-        / SCENARIO_ID
-    )
-
-    REPEAT_ROOT = (
-        TCP_DIR
-        / "outputs"
-        / "tcp_he_repeat_v1"
-        / SCENARIO_ID
-    )
-
-    if args.runs < 1:
+    if (
+        args.start_pair < 1
+        or
+        args.start_pair > args.repeats
+    ):
         raise ValueError(
-            "--runs must be >= 1"
+            "--start-pair must be between "
+            "1 and --repeats"
+        )
+    if args.repeats <= 0:
+
+        raise ValueError(
+            "--repeats must be > 0"
         )
 
-    if not PAIR_SCRIPT.exists():
+    resolved_path = Path(
+        args.resolved
+    ).resolve()
+
+    view_matrix_path = Path(
+        args.view_matrix_csv
+    ).resolve()
+
+    output_root = Path(
+        args.output_root
+    ).resolve()
+
+    if not resolved_path.exists():
+
         raise FileNotFoundError(
-            PAIR_SCRIPT
+            resolved_path
         )
 
-    REPEAT_ROOT.mkdir(
+    if not view_matrix_path.exists():
+
+        raise FileNotFoundError(
+            view_matrix_path
+        )
+
+    output_root.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    print("=" * 78)
-    print("TCP CARLA / HE REPEATABILITY EXPERIMENT")
-    print("=" * 78)
-
-    print(
-        "runs per condition:",
-        args.runs,
-    )
-
-    print(
-        "scenario:",
-        SCENARIO_ID,
-    )
-
-    print(
-        "output:",
-        REPEAT_ROOT,
-    )
-
-    if not args.no_snapshot:
-        archive_existing_outputs()
-
-    for run_idx in range(
-        1,
-        args.runs + 1,
-    ):
-        # Interleave conditions deliberately.
-        #
-        # This is preferable to CARLA x5 followed by HE x5,
-        # because machine/environment drift cannot systematically
-        # affect only one condition.
-
-        run_condition(
-            condition="carla",
-            run_idx=run_idx,
-            args=args,
+    with resolved_path.open(
+        "r",
+        encoding="utf-8",
+    ) as fp:
+        resolved_data = json.load(
+            fp
         )
 
-        run_condition(
-            condition="he",
-            run_idx=run_idx,
-            args=args,
-        )
+    scenario_id = str(
+        resolved_data[
+            "scenario_id"
+        ]
+    )
+
+    manifest = {
+
+        "schema":
+            "tcp_he_repeat_manifest_v1",
+
+        "scenario_id":
+            scenario_id,
+
+        "repeats":
+            args.repeats,
+
+        "resolved":
+            str(
+                resolved_path
+            ),
+
+        "actor_id":
+            args.actor_id,
+
+        "town":
+            args.town,
+
+        "spawn_index":
+            args.spawn_index,
+
+        "event_start_s":
+            args.event_start_s,
+
+        "view_matrix_csv":
+            str(
+                view_matrix_path
+            ),
+
+        "distance_selection_mode":
+            args.distance_selection_mode,
+
+        "python":
+            sys.executable,
+
+        "pairs":
+            [],
+    }
 
     print()
-    print("=" * 78)
-    print("REPEAT EXPERIMENT COMPLETE")
-    print("=" * 78)
+    print("=" * 88)
+    print(
+        "TCP CARLA <-> HE REPEATED EXPERIMENT V1"
+    )
+    print("=" * 88)
 
     print(
-        "results:",
-        REPEAT_ROOT,
+        "scenario :",
+        scenario_id,
     )
+
+    print(
+        "repeats  :",
+        args.repeats,
+    )
+
+    print(
+        "python   :",
+        sys.executable,
+    )
+
+    print(
+        "sprites  :",
+        view_matrix_path,
+    )
+
+    print(
+        "output   :",
+        output_root,
+    )
+
+    print("=" * 88)
+
+    # ========================================================
+    # Repeated pairs
+    # ========================================================
+
+    for pair_idx in range(
+        args.start_pair,
+        args.repeats + 1,
+    ):
+
+        pair_name = (
+            f"pair_{pair_idx:02d}"
+        )
+
+        pair_root = (
+            output_root
+            / pair_name
+        )
+
+        # Alternate condition order.
+        if pair_idx % 2 == 1:
+
+            conditions = [
+                "carla",
+                "he",
+            ]
+
+        else:
+
+            conditions = [
+                "he",
+                "carla",
+            ]
+
+        pair_manifest = {
+
+            "pair_idx":
+                pair_idx,
+
+            "pair_name":
+                pair_name,
+
+            "condition_order":
+                conditions,
+
+            "pair_root":
+                str(
+                    pair_root
+                ),
+        }
+
+        manifest[
+            "pairs"
+        ].append(
+            pair_manifest
+        )
+
+        pair_root.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        with (
+            pair_root
+            / "pair_manifest.json"
+        ).open(
+            "w",
+            encoding="utf-8",
+        ) as fp:
+
+            json.dump(
+                pair_manifest,
+                fp,
+                indent=2,
+            )
+
+        print()
+        print("#" * 88)
+
+        print(
+            f"PAIR {pair_idx}/{args.repeats}"
+        )
+
+        print(
+            "order:",
+            " -> ".join(
+                conditions
+            ),
+        )
+
+        print("#" * 88)
+
+        # ====================================================
+        # CARLA / HE runs
+        # ====================================================
+
+        for condition in conditions:
+
+            cmd = [
+
+                sys.executable,
+
+                str(
+                    RUNNER
+                ),
+
+                "--condition",
+                condition,
+
+                "--resolved",
+                str(
+                    resolved_path
+                ),
+
+                "--actor-id",
+                args.actor_id,
+
+                "--town",
+                args.town,
+
+                "--spawn-index",
+                str(
+                    args.spawn_index
+                ),
+
+                "--event-start-s",
+                str(
+                    args.event_start_s
+                ),
+
+                "--carla-pythonapi",
+                args.carla_pythonapi,
+
+                "--output-root",
+                str(
+                    pair_root
+                ),
+            ]
+
+            # Only HE needs sprite-bank arguments.
+            if condition == "he":
+
+                cmd.extend([
+                    "--view-matrix-csv",
+                    str(
+                        view_matrix_path
+                    ),
+
+                    "--distance-selection-mode",
+                    args.distance_selection_mode,
+
+                    "--he-bottom-y-offset-px",
+                    str(
+                        args.he_bottom_y_offset_px
+                    ),
+                ])
+
+            run_command(
+                cmd
+            )
+
+        # ====================================================
+        # Analyze this CARLA <-> HE pair
+        # ====================================================
+
+        scenario_root = (
+            pair_root
+            / scenario_id
+        )
+
+        carla_csv = (
+            scenario_root
+            / (
+                scenario_id
+                + "_carla.csv"
+            )
+        )
+
+        he_csv = (
+            scenario_root
+            / (
+                scenario_id
+                + "_he.csv"
+            )
+        )
+
+        analysis_dir = (
+            scenario_root
+            / "analysis"
+        )
+
+        cmd = [
+
+            sys.executable,
+
+            str(
+                PAIR_ANALYZER
+            ),
+
+            "--carla",
+            str(
+                carla_csv
+            ),
+
+            "--he",
+            str(
+                he_csv
+            ),
+
+            "--output-dir",
+            str(
+                analysis_dir
+            ),
+        ]
+
+        run_command(
+            cmd
+        )
+
+    # ========================================================
+    # Save repeat manifest
+    # ========================================================
+
+    manifest_path = (
+        output_root
+        / "repeat_manifest.json"
+    )
+
+    with manifest_path.open(
+        "w",
+        encoding="utf-8",
+    ) as fp:
+
+        json.dump(
+            manifest,
+            fp,
+            indent=2,
+        )
+
+    # ========================================================
+    # Aggregate all pairs
+    # ========================================================
+
+    cmd = [
+
+        sys.executable,
+
+        str(
+            REPEAT_ANALYZER
+        ),
+
+        "--root",
+        str(
+            output_root
+        ),
+
+        "--scenario",
+        scenario_id,
+
+        "--repeats",
+        str(
+            args.repeats
+        ),
+    ]
+
+    run_command(
+        cmd
+    )
+
+    print()
+    print("=" * 88)
+    print(
+        "ALL TCP CARLA <-> HE PAIRS COMPLETE"
+    )
+    print("=" * 88)
+
+    print(
+        "root:",
+        output_root,
+    )
+
+    print(
+        "manifest:",
+        manifest_path,
+    )
+
+    print("=" * 88)
 
 
 if __name__ == "__main__":
+
     main()
