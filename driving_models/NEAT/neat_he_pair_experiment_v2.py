@@ -52,7 +52,6 @@ from pathlib import Path
 import carla
 import numpy as np
 import torch
-
 from PIL import Image, ImageDraw
 
 
@@ -118,6 +117,16 @@ from carla_ego_initialization import (
     canonicalize_ego_start,
     get_vehicle_state,
     print_vehicle_state,
+)
+
+from route_progress_metrics_v1 import (
+    RouteProjector,
+    compute_route_pair_metrics,
+    route_virtual_collision,
+)
+
+from traffic_light_schedule_v1 import (
+    TrafficLightScheduleExecutor,
 )
 
 DEFAULT_SPRITE_ROOT = (
@@ -902,7 +911,23 @@ def main():
             "settle onto the road before canonical reset."
         ),
     )
-
+    
+    parser.add_argument(
+        "--route-metrics-csv",
+        default=None,
+        help=(
+            "Optional inspected route.csv used for "
+            "turn-aware route-progress gap/TTC metrics."
+        ),
+    )
+    parser.add_argument(
+        "--environment-json",
+        default=None,
+        help=(
+            "Optional ScenarioGenerator environment sidecar "
+            "containing deterministic traffic-light/weather events."
+        ),
+    )
     parser.add_argument(
         "--canonical-hold-ticks",
         type=int,
@@ -1380,7 +1405,7 @@ def main():
     actors = []
 
     csv_file = None
-
+    traffic_light_executor = None
     try:
 
         # ====================================================
@@ -1972,7 +1997,39 @@ def main():
                     ),
                 ),
             )
+        # ====================================================
+        # Deterministic environment schedule
+        # ====================================================
 
+        if (
+            args.environment_json
+            is not None
+        ):
+
+            traffic_light_executor = (
+                TrafficLightScheduleExecutor.from_json(
+                    world=world,
+                    carla_module=carla,
+                    path=args.environment_json,
+                )
+            )
+
+            traffic_light_executor.initialize()
+
+            print(
+                "[environment]",
+                Path(
+                    args.environment_json
+                ).resolve(),
+            )
+
+            print(
+                "[traffic-light initial state]",
+                traffic_light_executor
+                .primary_state_name(
+                    0.0
+                ),
+            )
         # ====================================================
         # First synchronized experimental frame
         # ====================================================
@@ -2033,6 +2090,7 @@ def main():
             "probe_idx",
             "carla_frame",
             "t_s",
+            "traffic_light_state",
 
             "ego_x",
             "ego_y",
@@ -2056,6 +2114,24 @@ def main():
             "closing_speed_mps",
             "ttc_s",
             "virtual_collision",
+
+            # Turn-aware route metrics.
+            "ego_route_progress_m",
+            "actor_route_progress_m",
+
+            "route_center_gap_m",
+            "route_bumper_gap_m",
+
+            "ego_route_lateral_m",
+            "actor_route_lateral_m",
+            "route_lateral_separation_m",
+
+            "ego_route_speed_mps",
+            "actor_route_speed_mps",
+            "route_closing_speed_mps",
+
+            "route_ttc_s",
+            "route_virtual_collision",
 
             "route_index",
             "route_deviation_m",
@@ -2125,7 +2201,67 @@ def main():
         # ====================================================
         # Runtime
         # ====================================================
+        # ====================================================
+        # Turn-aware route metrics
+        # ====================================================
 
+        route_projector = None
+
+        route_metric_ego_segment = None
+        route_metric_actor_segment = None
+
+        min_route_gap = float(
+            "inf"
+        )
+
+        any_route_virtual_collision = False
+
+        ego_bb = (
+            ego.bounding_box
+        )
+
+        ego_length_m = (
+            2.0
+            * float(
+                ego_bb.extent.x
+            )
+        )
+
+        ego_width_m = (
+            2.0
+            * float(
+                ego_bb.extent.y
+            )
+        )
+
+        if (
+            args.route_metrics_csv
+            is not None
+        ):
+
+            route_projector = (
+                RouteProjector.from_csv(
+                    args.route_metrics_csv
+                )
+            )
+
+            print(
+                "[route metrics]",
+                Path(
+                    args.route_metrics_csv
+                ).resolve(),
+            )
+
+            print(
+                "[route metrics length]",
+                f"{route_projector.total_length_m:.2f} m",
+            )
+
+            print(
+                "[ego physical dimensions]",
+                f"L={ego_length_m:.3f} "
+                f"W={ego_width_m:.3f}",
+            )
         route_idx = 0
         deviation_counter = 0
 
@@ -2176,6 +2312,33 @@ def main():
         for i, actor_frame in enumerate(
             actor_frames
         ):
+
+            # ------------------------------------------------
+            # Traffic-light state for THIS observation.
+            #
+            # The state for the current camera frame was already
+            # applied before the world.tick() that produced it.
+            # Calling primary_state_name() here records/verifies
+            # the same deterministic scenario state.
+            # ------------------------------------------------
+
+            traffic_light_state = ""
+
+            if (
+                traffic_light_executor
+                is not None
+            ):
+
+                traffic_light_state = (
+                    traffic_light_executor
+                    .primary_state_name(
+                        float(
+                            actor_frame[
+                                "t_s"
+                            ]
+                        )
+                    )
+                )
 
             # ------------------------------------------------
             # Scenario truth for THIS observation.
@@ -2498,7 +2661,115 @@ def main():
                     ego=ego,
                 )
             )
+            # ------------------------------------------------
+            # Turn-aware route safety metrics
+            # ------------------------------------------------
 
+            route_metrics = None
+            route_collision = False
+
+            if (
+                route_projector
+                is not None
+            ):
+
+                ego_velocity = (
+                    ego.get_velocity()
+                )
+
+                route_metrics = (
+                    compute_route_pair_metrics(
+                        projector=
+                            route_projector,
+
+                        ego_x=
+                            ego_loc.x,
+
+                        ego_y=
+                            ego_loc.y,
+
+                        ego_vx=
+                            ego_velocity.x,
+
+                        ego_vy=
+                            ego_velocity.y,
+
+                        actor_x=
+                            actor_tf.location.x,
+
+                        actor_y=
+                            actor_tf.location.y,
+
+                        ego_length_m=
+                            ego_length_m,
+
+                        actor_length_m=
+                            dimensions[
+                                "length_m"
+                            ],
+
+                        actor_route_speed_mps=
+                            float(
+                                actor_frame[
+                                    "speed_mps"
+                                ]
+                            ),
+
+                        previous_ego_segment_idx=
+                            route_metric_ego_segment,
+
+                        previous_actor_segment_idx=
+                            route_metric_actor_segment,
+                    )
+                )
+
+                route_metric_ego_segment = (
+                    route_metrics
+                    .ego
+                    .segment_idx
+                )
+
+                route_metric_actor_segment = (
+                    route_metrics
+                    .actor
+                    .segment_idx
+                )
+
+                route_collision = (
+                    route_virtual_collision(
+                        metrics=
+                            route_metrics,
+
+                        ego_length_m=
+                            ego_length_m,
+
+                        actor_length_m=
+                            dimensions[
+                                "length_m"
+                            ],
+
+                        ego_width_m=
+                            ego_width_m,
+
+                        actor_width_m=
+                            dimensions[
+                                "width_m"
+                            ],
+                    )
+                )
+
+                min_route_gap = min(
+                    min_route_gap,
+                    float(
+                        route_metrics
+                        .bumper_gap_m
+                    ),
+                )
+
+                if route_collision:
+                    any_route_virtual_collision = (
+                        True
+                    )
             min_gap = min(
                 min_gap,
                 float(
@@ -2659,6 +2930,9 @@ def main():
                         ]
                     ),
 
+                "traffic_light_state":
+                    traffic_light_state,
+
                 "ego_x":
                     float(
                         ego_loc.x
@@ -2778,6 +3052,136 @@ def main():
                         metrics[
                             "virtual_collision"
                         ]
+                    ),
+
+                "ego_route_progress_m":
+                    (
+                        float(
+                            route_metrics.ego.s_m
+                        )
+                        if route_metrics
+                        is not None
+                        else ""
+                    ),
+
+                "actor_route_progress_m":
+                    (
+                        float(
+                            route_metrics.actor.s_m
+                        )
+                        if route_metrics
+                        is not None
+                        else ""
+                    ),
+
+                "route_center_gap_m":
+                    (
+                        float(
+                            route_metrics.center_gap_m
+                        )
+                        if route_metrics
+                        is not None
+                        else ""
+                    ),
+
+                "route_bumper_gap_m":
+                    (
+                        float(
+                            route_metrics.bumper_gap_m
+                        )
+                        if route_metrics
+                        is not None
+                        else ""
+                    ),
+
+                "ego_route_lateral_m":
+                    (
+                        float(
+                            route_metrics.ego.lateral_m
+                        )
+                        if route_metrics
+                        is not None
+                        else ""
+                    ),
+
+                "actor_route_lateral_m":
+                    (
+                        float(
+                            route_metrics.actor.lateral_m
+                        )
+                        if route_metrics
+                        is not None
+                        else ""
+                    ),
+
+                "route_lateral_separation_m":
+                    (
+                        float(
+                            route_metrics
+                            .lateral_separation_m
+                        )
+                        if route_metrics
+                        is not None
+                        else ""
+                    ),
+
+                "ego_route_speed_mps":
+                    (
+                        float(
+                            route_metrics
+                            .ego_route_speed_mps
+                        )
+                        if route_metrics
+                        is not None
+                        else ""
+                    ),
+
+                "actor_route_speed_mps":
+                    (
+                        float(
+                            route_metrics
+                            .actor_route_speed_mps
+                        )
+                        if route_metrics
+                        is not None
+                        else ""
+                    ),
+
+                "route_closing_speed_mps":
+                    (
+                        float(
+                            route_metrics
+                            .closing_speed_mps
+                        )
+                        if route_metrics
+                        is not None
+                        else ""
+                    ),
+
+                "route_ttc_s":
+                    (
+                        float(
+                            route_metrics.ttc_s
+                        )
+                        if (
+                            route_metrics
+                            is not None
+                            and
+                            math.isfinite(
+                                route_metrics.ttc_s
+                            )
+                        )
+                        else ""
+                    ),
+
+                "route_virtual_collision":
+                    (
+                        int(
+                            route_collision
+                        )
+                        if route_metrics
+                        is not None
+                        else ""
                     ),
 
                 "route_index":
@@ -3140,11 +3544,28 @@ def main():
             # ------------------------------------------------
             # IMPORTANT:
             #
-            # Put adversary at NEXT scenario pose BEFORE
-            # advancing synchronous CARLA.
+            # Prepare the environment and adversary for NEXT
+            # scenario frame BEFORE advancing synchronous CARLA.
             #
-            # Therefore camera frame i+1 sees actor frame i+1.
+            # Therefore camera frame i+1 sees:
+            #     - traffic-light state for actor frame i+1
+            #     - adversary pose for actor frame i+1
             # ------------------------------------------------
+
+            if (
+                traffic_light_executor
+                is not None
+            ):
+
+                traffic_light_executor.apply(
+                    float(
+                        actor_frames[
+                            i + 1
+                        ][
+                            "t_s"
+                        ]
+                    )
+                )
 
             next_actor_tf = (
                 sg_actor_to_world_transform(
@@ -3242,7 +3663,20 @@ def main():
             "virtual collision:",
             any_collision,
         )
+        if (
+            route_projector
+            is not None
+        ):
 
+            print(
+                "minimum route bumper gap:",
+                f"{min_route_gap:.3f} m",
+            )
+
+            print(
+                "route virtual collision:",
+                any_route_virtual_collision,
+            )
         if (
             first_brake_after_event
             is None
@@ -3283,6 +3717,21 @@ def main():
         print(
             "[cleanup]"
         )
+
+        if (
+            traffic_light_executor
+            is not None
+        ):
+
+            try:
+                traffic_light_executor.restore()
+
+            except Exception as exc:
+                print(
+                    "[cleanup warning] "
+                    "traffic-light restore:",
+                    exc,
+                )
 
         if csv_file is not None:
 
