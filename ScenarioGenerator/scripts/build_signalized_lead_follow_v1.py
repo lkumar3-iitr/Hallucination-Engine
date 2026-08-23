@@ -750,9 +750,14 @@ def main():
     )
 
     parser.add_argument(
-        "--traffic-light-id",
-        type=int,
-        default=709,
+        "--traffic-light-route-progress-m",
+        type=float,
+        default=157.0,
+        help=(
+            "Approximate stable route progress of the "
+            "traffic light used by this scenario. "
+            "The nearest route-relevant signal is selected."
+        ),
     )
 
     parser.add_argument(
@@ -869,35 +874,93 @@ def main():
         traffic_lights_csv
     )
 
-    target_light = None
+    # ========================================================
+    # Stable traffic-light selection
+    #
+    # CARLA actor IDs are regenerated whenever load_world()
+    # creates a new world. Therefore traffic_light_id cannot
+    # be used as a persistent scenario identifier.
+    #
+    # Instead, select the route-relevant signal nearest the
+    # requested stable route progress.
+    # ========================================================
 
-    for row in traffic_lights:
+    relevant_traffic_lights = [
+        row
+        for row in traffic_lights
         if (
-            int(
-                row[
-                    "traffic_light_id"
-                ]
+            str(
+                row.get(
+                    "relevant_to_route",
+                    ""
+                )
             )
-            == int(
-                args.traffic_light_id
+            .strip()
+            .lower()
+            in (
+                "1",
+                "true",
+                "yes",
             )
-        ):
-            target_light = row
-            break
-
-    if target_light is None:
-        raise RuntimeError(
-            f"Traffic light "
-            f"{args.traffic_light_id} "
-            f"not found in "
-            f"{traffic_lights_csv}"
         )
+    ]
+
+    if not relevant_traffic_lights:
+
+        raise RuntimeError(
+            "No route-relevant traffic lights "
+            f"found in {traffic_lights_csv}"
+        )
+
+    target_light = min(
+        relevant_traffic_lights,
+        key=lambda row:
+            abs(
+                float(
+                    row[
+                        "route_progress_m"
+                    ]
+                )
+                - float(
+                    args
+                    .traffic_light_route_progress_m
+                )
+            ),
+    )
 
     light_s_m = float(
         target_light[
             "route_progress_m"
         ]
     )
+
+    traffic_light_id = int(
+        target_light[
+            "traffic_light_id"
+        ]
+    )
+
+    traffic_light_route_error_m = abs(
+        light_s_m
+        - float(
+            args
+            .traffic_light_route_progress_m
+        )
+    )
+
+    if (
+        traffic_light_route_error_m
+        > 10.0
+    ):
+
+        raise RuntimeError(
+            "Nearest route-relevant traffic light "
+            "is too far from requested route progress: "
+            f"requested="
+            f"{args.traffic_light_route_progress_m:.2f} m, "
+            f"selected="
+            f"{light_s_m:.2f} m"
+        )
 
     stop_s_m = (
         light_s_m
@@ -1144,10 +1207,10 @@ def main():
 
         "description":
             (
-                "Long-horizon signalized lead-follow scenario. "
                 "A Tesla follows the Town10HD_Opt spawn-10 to "
-                "destination-45 route, stops for traffic light 709, "
-                "resumes on green, performs the route's right turn, "
+                "destination-45 route, stops for the selected "
+                "route traffic light, resumes on green, performs "
+                "the route's right turn, "
                 "and continues. Ego is externally controlled by the "
                 "driving model during execution; the static ego "
                 "motion here is a resolver placeholder."
@@ -1336,7 +1399,7 @@ def main():
             {
                 "traffic_light_id":
                     int(
-                        args.traffic_light_id
+                        traffic_light_id
                     ),
 
                 "route_progress_m":
@@ -1512,8 +1575,10 @@ def main():
 
     print(
         f"traffic light        : "
-        f"{args.traffic_light_id} "
-        f"at s={light_s_m:.2f} m"
+        f"{traffic_light_id} "
+        f"at s={light_s_m:.2f} m "
+        f"(selection error "
+        f"{traffic_light_route_error_m:.2f} m)"
     )
 
     print(

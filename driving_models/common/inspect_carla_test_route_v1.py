@@ -1199,11 +1199,50 @@ def main():
             "No usable route."
         )
 
-    cumulative = (
+    # --------------------------------------------------------
+    # Route progress must start at the EXACT CARLA spawn.
+    #
+    # GlobalRoutePlanner.trace_route() may return its first
+    # waypoint slightly ahead of the requested spawn transform.
+    #
+    # The driving-model runners use the actual spawn transform
+    # as the ScenarioGenerator/world origin, so route progress
+    # must use the same physical origin.
+    # --------------------------------------------------------
+
+    spawn_tf = (
+        spawn_points[
+            start_idx
+        ]
+    )
+
+    first_route_tf = (
+        route[0][0]
+        .transform
+    )
+
+    spawn_to_first_route_m = (
+        distance_2d(
+            spawn_tf.location,
+            first_route_tf.location,
+        )
+    )
+
+    trace_cumulative = (
         route_cumulative_distance(
             route
         )
     )
+
+    cumulative = [
+        float(
+            spawn_to_first_route_m
+        )
+        + float(s_m)
+
+        for s_m
+        in trace_cumulative
+    ]
 
     # ========================================================
     # Route rows
@@ -1211,11 +1250,98 @@ def main():
 
     route_rows = []
 
+    # --------------------------------------------------------
+    # Synthetic route-origin row.
+    #
+    # This is the exact CARLA spawn transform used by the
+    # driving-model experiments.
+    #
+    # The first traced waypoint follows at its true geometric
+    # distance from this origin.
+    # --------------------------------------------------------
+
+    first_waypoint = (
+        route[0][0]
+    )
+
+    first_road_option = (
+        route[0][1]
+    )
+
+    route_rows.append(
+        {
+            "route_idx":
+                -1,
+
+            "route_progress_m":
+                0.0,
+
+            "x":
+                float(
+                    spawn_tf.location.x
+                ),
+
+            "y":
+                float(
+                    spawn_tf.location.y
+                ),
+
+            "z":
+                float(
+                    spawn_tf.location.z
+                ),
+
+            "yaw_deg":
+                float(
+                    spawn_tf.rotation.yaw
+                ),
+
+            "road_option":
+                command_name(
+                    first_road_option
+                ),
+
+            "road_id":
+                int(
+                    first_waypoint.road_id
+                ),
+
+            "section_id":
+                int(
+                    first_waypoint.section_id
+                ),
+
+            "lane_id":
+                int(
+                    first_waypoint.lane_id
+                ),
+
+            "waypoint_s":
+                float(
+                    first_waypoint.s
+                ),
+
+            "lane_width_m":
+                float(
+                    first_waypoint.lane_width
+                ),
+
+            "is_junction":
+                bool(
+                    first_waypoint.is_junction
+                ),
+
+            "junction_id":
+                get_junction_id(
+                    first_waypoint
+                ),
+        }
+    )
+
     for idx, (
         waypoint,
         road_option,
     ) in enumerate(route):
-
         tf = waypoint.transform
 
         route_rows.append(
@@ -1372,12 +1498,39 @@ def main():
             ),
 
         "route_points":
-            len(route),
+            len(route_rows),
 
         "route_length_m":
             float(
                 cumulative[-1]
             ),
+
+        "spawn_to_first_route_m":
+            float(
+                spawn_to_first_route_m
+            ),
+
+        "spawn_transform": {
+            "x":
+                float(
+                    spawn_tf.location.x
+                ),
+
+            "y":
+                float(
+                    spawn_tf.location.y
+                ),
+
+            "z":
+                float(
+                    spawn_tf.location.z
+                ),
+
+            "yaw_deg":
+                float(
+                    spawn_tf.rotation.yaw
+                ),
+        },
 
         "relevant_traffic_lights":
             relevant_lights,
@@ -1428,12 +1581,17 @@ def main():
 
     print(
         f"route points: "
-        f"{len(route)}"
+        f"{len(route_rows)}"
     )
 
     print(
         f"route length: "
         f"{cumulative[-1]:.2f} m"
+    )
+
+    print(
+        f"spawn -> first GRP waypoint: "
+        f"{spawn_to_first_route_m:.3f} m"
     )
 
     print()

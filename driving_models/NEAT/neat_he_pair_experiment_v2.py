@@ -50,6 +50,7 @@ import sys
 from pathlib import Path
 
 import carla
+import cv2
 import numpy as np
 import torch
 from PIL import Image, ImageDraw
@@ -1080,6 +1081,15 @@ def main():
     )
 
     parser.add_argument(
+        "--save-video",
+        action="store_true",
+        help=(
+            "Save one compact MP4 containing the exact "
+            "NEAT model-input crops: FRONT | LEFT | RIGHT."
+        ),
+    )
+
+    parser.add_argument(
         "--output-root",
         default=str(
             DEFAULT_OUTPUT_ROOT
@@ -1405,7 +1415,10 @@ def main():
     actors = []
 
     csv_file = None
+    video_writer = None
+    video_path = None
     traffic_light_executor = None
+
     try:
 
         # ====================================================
@@ -2199,6 +2212,65 @@ def main():
         writer.writeheader()
 
         # ====================================================
+        # Optional compact model-input video
+        #
+        # Store the exact 256x256 crops supplied to NEAT:
+        #
+        #     FRONT | LEFT | RIGHT
+        #
+        # No temporary PNG sequence is required.
+        # ====================================================
+
+        if args.save_video:
+
+            video_path = (
+                condition_dir
+                /
+                (
+                    scenario[
+                        "scenario_id"
+                    ]
+                    + "_"
+                    + args.condition
+                    + "_inputs.mp4"
+                )
+            )
+
+            fourcc = (
+                cv2.VideoWriter_fourcc(
+                    *"mp4v"
+                )
+            )
+
+            video_writer = (
+                cv2.VideoWriter(
+                    str(
+                        video_path
+                    ),
+                    fourcc,
+                    float(
+                        fps
+                    ),
+                    (
+                        768,
+                        256,
+                    ),
+                )
+            )
+
+            if not video_writer.isOpened():
+
+                raise RuntimeError(
+                    "Could not open video writer: "
+                    f"{video_path}"
+                )
+
+            print(
+                "[video]",
+                video_path,
+            )
+
+        # ====================================================
         # Runtime
         # ====================================================
         # ====================================================
@@ -2821,10 +2893,18 @@ def main():
                         ),
 
                     "gap_m":
-                        float(
-                            metrics[
-                                "bumper_gap_m"
-                            ]
+                        (
+                            float(
+                                route_metrics
+                                .bumper_gap_m
+                            )
+                            if route_metrics is not None
+                            else
+                            float(
+                                metrics[
+                                    "bumper_gap_m"
+                                ]
+                            )
                         ),
                 }
 
@@ -3431,6 +3511,40 @@ def main():
             completed_frames += 1
 
             # ------------------------------------------------
+            # Optional compact model-input video
+            # ------------------------------------------------
+
+            if video_writer is not None:
+
+                video_frame = (
+                    np.concatenate(
+                        [
+                            crop_neat_rgb(
+                                rgb_front
+                            ),
+
+                            crop_neat_rgb(
+                                rgb_left
+                            ),
+
+                            crop_neat_rgb(
+                                rgb_right
+                            ),
+                        ],
+                        axis=1,
+                    )
+                )
+
+                # Internal images are RGB.
+                # OpenCV VideoWriter expects BGR.
+                video_writer.write(
+                    cv2.cvtColor(
+                        video_frame,
+                        cv2.COLOR_RGB2BGR,
+                    )
+                )
+
+            # ------------------------------------------------
             # Debug
             # ------------------------------------------------
 
@@ -3710,6 +3824,13 @@ def main():
             debug_dir,
         )
 
+        if video_path is not None:
+
+            print(
+                "video:",
+                video_path,
+            )
+
         print("=" * 78)
 
     finally:
@@ -3736,6 +3857,10 @@ def main():
         if csv_file is not None:
 
             csv_file.close()
+
+        if video_writer is not None:
+
+            video_writer.release()
 
         # Sensors first.
 
