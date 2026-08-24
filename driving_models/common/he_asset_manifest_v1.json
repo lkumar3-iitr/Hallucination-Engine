@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "assets": [
+    {
+      "key": "vehicle.passenger_01",
+      "folder": "tesla_model3_native_full_v3",
+      "aliases": [
+        "vehicle.tesla.model3",
+        "tesla_model3"
+      ]
+    },
+    {
+      "key": "vehicle.passenger_02",
+      "folder": "nissan_patrol_2021_native_full_v3",
+      "aliases": [
+        "nissan_patrol_2021"
+      ]
+    },
+    {
+      "key": "vehicle.bus_01",
+      "folder": "fuso_rosa_bus_native_full_v3",
+      "aliases": [
+        "fuso_rosa_bus"
+      ]
+    },
+    {
+      "key": "pedestrian.person_01",
+      "folder": "pedestrian_0001_native_full_v3",
+      "aliases": [
+        "pedestrian_0001"
+      ]
+    }
+  ]
+}
