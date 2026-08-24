@@ -1879,11 +1879,18 @@ def compute_view_matrix_coordinates(
         )
     )
 
-    # Preserve the already validated HE physical-viewpoint convention.
-    viewpoint_angle_deg = (
+    # Production 4320 sprite-bank convention:
+    #
+    #   0 deg   = FRONT view
+    #   180 deg = REAR view
+    #
+    # The older HE viewpoint helper uses the opposite convention,
+    # so rotate only the production view-matrix query by 180 deg.
+    viewpoint_angle_deg = normalize_angle_360(
         compute_viewpoint_sprite_angle(
             state
         )
+        + 180.0
     )
 
     if vertical_mode == "state_y":
