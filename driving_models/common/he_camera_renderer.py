@@ -1297,6 +1297,8 @@ def render_he_actor(
     width,
     height,
     fov,
+    scene_depth_m=None,
+    scene_occlusion_margin_m=0.25,
 ):
 
     frame = (
@@ -1517,6 +1519,358 @@ def render_he_actor(
     )
 
 # ============================================================
+# Scene-depth occlusion
+# ============================================================
+
+def apply_scene_depth_occlusion_to_sprite(
+    sprite_rgba,
+    scene_depth_m,
+    paste_x1,
+    paste_y1,
+    actor_nearest_depth_m,
+    margin_m=0.25,
+):
+    """
+    Mask HE pixels that are hidden by closer CARLA/world geometry.
+
+    Parameters
+    ----------
+    sprite_rgba:
+        Local warped HE RGBA crop.
+
+    scene_depth_m:
+        Full-frame metric depth image aligned exactly with the
+        model's native RGB camera.
+
+    paste_x1, paste_y1:
+        Top-left location where sprite_rgba will be composited
+        into the native RGB frame.
+
+    actor_nearest_depth_m:
+        Conservative nearest physical depth of the HE actor.
+
+    margin_m:
+        Depth tolerance. Scene geometry must be at least this
+        much closer than the HE actor before it occludes HE.
+
+        Positive margin helps prevent road/contact-surface noise
+        from incorrectly cutting away the bottom of the sprite.
+
+    Returns
+    -------
+    masked_rgba, metadata
+    """
+
+    meta = {
+        "enabled":
+            False,
+
+        "actor_nearest_depth_m":
+            (
+                float(
+                    actor_nearest_depth_m
+                )
+                if actor_nearest_depth_m is not None
+                else None
+            ),
+
+        "margin_m":
+            float(
+                margin_m
+            ),
+
+        "occlusion_threshold_m":
+            None,
+
+        "sprite_alpha_pixels_in_frame":
+            0,
+
+        "occluded_alpha_pixels":
+            0,
+
+        "remaining_alpha_pixels":
+            0,
+
+        "occluded_fraction":
+            0.0,
+    }
+
+    if scene_depth_m is None:
+
+        meta[
+            "reason"
+        ] = "scene_depth_not_provided"
+
+        return (
+            sprite_rgba,
+            meta,
+        )
+
+    actor_depth = float(
+        actor_nearest_depth_m
+    )
+
+    if (
+        not np.isfinite(
+            actor_depth
+        )
+        or
+        actor_depth <= 0.0
+    ):
+
+        meta[
+            "reason"
+        ] = "invalid_actor_depth"
+
+        return (
+            sprite_rgba,
+            meta,
+        )
+
+    scene_depth = np.asarray(
+        scene_depth_m,
+        dtype=np.float32,
+    )
+
+    if scene_depth.ndim != 2:
+
+        raise ValueError(
+            "scene_depth_m must be a 2-D metric depth image."
+        )
+
+    output = (
+        sprite_rgba.copy()
+    )
+
+    sprite_h, sprite_w = (
+        output.shape[
+            :2
+        ]
+    )
+
+    frame_h, frame_w = (
+        scene_depth.shape
+    )
+
+    x1 = int(
+        paste_x1
+    )
+
+    y1 = int(
+        paste_y1
+    )
+
+    x2 = (
+        x1
+        + sprite_w
+    )
+
+    y2 = (
+        y1
+        + sprite_h
+    )
+
+    # --------------------------------------------------------
+    # Intersection of local sprite crop with camera frame.
+    # --------------------------------------------------------
+
+    frame_x1 = max(
+        0,
+        x1,
+    )
+
+    frame_y1 = max(
+        0,
+        y1,
+    )
+
+    frame_x2 = min(
+        frame_w,
+        x2,
+    )
+
+    frame_y2 = min(
+        frame_h,
+        y2,
+    )
+
+    meta[
+        "enabled"
+    ] = True
+
+    if (
+        frame_x2 <= frame_x1
+        or
+        frame_y2 <= frame_y1
+    ):
+
+        meta[
+            "reason"
+        ] = "sprite_outside_depth_frame"
+
+        return (
+            output,
+            meta,
+        )
+
+    # Corresponding region inside local sprite crop.
+    sprite_x1 = (
+        frame_x1
+        - x1
+    )
+
+    sprite_y1 = (
+        frame_y1
+        - y1
+    )
+
+    sprite_x2 = (
+        frame_x2
+        - x1
+    )
+
+    sprite_y2 = (
+        frame_y2
+        - y1
+    )
+
+    depth_region = (
+        scene_depth[
+            frame_y1:frame_y2,
+            frame_x1:frame_x2,
+        ]
+    )
+
+    alpha_region = (
+        output[
+            sprite_y1:sprite_y2,
+            sprite_x1:sprite_x2,
+            3
+        ]
+    )
+
+    sprite_pixels = (
+        alpha_region
+        > 0
+    )
+
+    margin_m = max(
+        0.0,
+        float(
+            margin_m
+        ),
+    )
+
+    occlusion_threshold_m = (
+        actor_depth
+        - margin_m
+    )
+
+    valid_scene_depth = (
+        np.isfinite(
+            depth_region
+        )
+        &
+        (
+            depth_region
+            > 0.0
+        )
+    )
+
+    # --------------------------------------------------------
+    # Conservative occlusion rule:
+    #
+    # scene geometry must be clearly closer than the nearest
+    # physical surface of the HE actor.
+    #
+    # Using nearest actor depth intentionally avoids treating
+    # road pixels near the vehicle contact point as foreground.
+    # --------------------------------------------------------
+
+    foreground = (
+        sprite_pixels
+        &
+        valid_scene_depth
+        &
+        (
+            depth_region
+            <
+            occlusion_threshold_m
+        )
+    )
+
+    original_alpha_pixels = int(
+        np.count_nonzero(
+            sprite_pixels
+        )
+    )
+
+    occluded_alpha_pixels = int(
+        np.count_nonzero(
+            foreground
+        )
+    )
+
+    # alpha_region is a view into output, so this modifies
+    # the local warped RGBA crop directly.
+    alpha_region[
+        foreground
+    ] = 0
+
+    remaining_alpha_pixels = int(
+        np.count_nonzero(
+            alpha_region
+            > 0
+        )
+    )
+
+    if original_alpha_pixels > 0:
+
+        occluded_fraction = (
+            float(
+                occluded_alpha_pixels
+            )
+            /
+            float(
+                original_alpha_pixels
+            )
+        )
+
+    else:
+
+        occluded_fraction = 0.0
+
+    meta.update({
+        "reason":
+            "ok",
+
+        "occlusion_threshold_m":
+            float(
+                occlusion_threshold_m
+            ),
+
+        "sprite_alpha_pixels_in_frame":
+            original_alpha_pixels,
+
+        "occluded_alpha_pixels":
+            occluded_alpha_pixels,
+
+        "remaining_alpha_pixels":
+            remaining_alpha_pixels,
+
+        "occluded_fraction":
+            float(
+                occluded_fraction
+            ),
+    })
+
+    return (
+        output,
+        meta,
+    )
+
+
+# ============================================================
 # Production 4320 view-matrix renderer
 # ============================================================
 
@@ -1534,6 +1888,8 @@ def render_he_actor_view_matrix(
     bottom_y_offset_px=0.0,
     geometry_mode="proxy",
     sprite_geometry=None,
+    scene_depth_m=None,
+    scene_occlusion_margin_m=0.25,
 ):
 
     frame = (
@@ -1938,6 +2294,56 @@ def render_he_actor_view_matrix(
             "paste"
         ]
     )
+
+    # --------------------------------------------------------
+    # Optional CARLA/world -> HE depth occlusion.
+    #
+    # This happens AFTER:
+    #   - actor projection
+    #   - sprite selection
+    #   - sprite geometry
+    #   - subpixel warp
+    #
+    # Therefore it cannot modify the frozen HE placement or
+    # geometry calibration. It only removes HE pixels that are
+    # physically hidden behind closer world geometry.
+    # --------------------------------------------------------
+
+    (
+        warped_rgba,
+        scene_occlusion_meta,
+    ) = apply_scene_depth_occlusion_to_sprite(
+        sprite_rgba=
+            warped_rgba,
+
+        scene_depth_m=
+            scene_depth_m,
+
+        paste_x1=
+            paste[
+                "x1"
+            ],
+
+        paste_y1=
+            paste[
+                "y1"
+            ],
+
+        actor_nearest_depth_m=
+            box.get(
+                "nearest_depth_m",
+                box[
+                    "depth_m"
+                ],
+            ),
+
+        margin_m=
+            scene_occlusion_margin_m,
+    )
+
+    meta[
+        "scene_occlusion"
+    ] = scene_occlusion_meta
 
     (
         frame,

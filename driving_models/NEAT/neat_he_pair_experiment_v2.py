@@ -160,6 +160,187 @@ DEFAULT_OUTPUT_ROOT = (
 
 
 # ============================================================
+# NEAT-native aligned depth camera
+# ============================================================
+
+def make_neat_depth_camera(
+    world,
+    ego,
+    yaw,
+):
+    """
+    Spawn a depth camera exactly aligned with one NEAT RGB camera.
+
+    Native NEAT camera:
+        400x300
+        FOV 100
+        x=1.3
+        y=0.0
+        z=2.3
+
+    yaw is camera-specific:
+        front   0
+        left  -60
+        right +60
+
+    Used only for CARLA/world -> HE scene occlusion.
+    NEAT itself continues to receive RGB only.
+    """
+
+    bp = (
+        world
+        .get_blueprint_library()
+        .find(
+            "sensor.camera.depth"
+        )
+    )
+
+    bp.set_attribute(
+        "image_size_x",
+        "400",
+    )
+
+    bp.set_attribute(
+        "image_size_y",
+        "300",
+    )
+
+    bp.set_attribute(
+        "fov",
+        "100",
+    )
+
+    transform = carla.Transform(
+        carla.Location(
+            x=1.3,
+            y=0.0,
+            z=2.3,
+        ),
+        carla.Rotation(
+            pitch=0.0,
+            yaw=float(
+                yaw
+            ),
+            roll=0.0,
+        ),
+    )
+
+    return world.spawn_actor(
+        bp,
+        transform,
+        attach_to=ego,
+    )
+
+
+def carla_depth_image_to_m(
+    depth_image,
+):
+    """
+    Decode CARLA sensor.camera.depth into metric depth.
+
+    CARLA raw_data is BGRA.
+
+    depth =
+        1000 *
+        (R + 256*G + 256^2*B)
+        / (256^3 - 1)
+    """
+
+    array = np.frombuffer(
+        depth_image.raw_data,
+        dtype=np.uint8,
+    )
+
+    array = array.reshape(
+        (
+            depth_image.height,
+            depth_image.width,
+            4,
+        )
+    )
+
+    blue = (
+        array[
+            :,
+            :,
+            0
+        ]
+        .astype(
+            np.float32
+        )
+    )
+
+    green = (
+        array[
+            :,
+            :,
+            1
+        ]
+        .astype(
+            np.float32
+        )
+    )
+
+    red = (
+        array[
+            :,
+            :,
+            2
+        ]
+        .astype(
+            np.float32
+        )
+    )
+
+    normalized = (
+        red
+        +
+        green * 256.0
+        +
+        blue * 65536.0
+    ) / 16777215.0
+
+    return (
+        normalized
+        * 1000.0
+    ).astype(
+        np.float32,
+        copy=False,
+    )
+
+
+def drain_sensor_queue_nonblocking(
+    sensor_queue,
+):
+    """
+    Discard any sensor frames currently waiting in a queue.
+
+    Used only during physical/canonical initialization.
+
+    Initialization does not require synchronized sensor data;
+    it only needs CARLA physics to advance. Exact frame
+    synchronization remains mandatory once the actual
+    experiment begins.
+    """
+
+    if sensor_queue is None:
+        return 0
+
+    drained = 0
+
+    while True:
+
+        try:
+            sensor_queue.get_nowait()
+            drained += 1
+
+        except queue.Empty:
+            break
+
+    return drained
+
+
+# ============================================================
 # JSON
 # ============================================================
 
@@ -948,6 +1129,25 @@ def main():
         ],
     )
 
+    parser.add_argument(
+        "--he-scene-depth-occlusion",
+        action="store_true",
+        help=(
+            "Enable CARLA/world-to-HE scene-depth occlusion "
+            "independently in NEAT front/left/right cameras."
+        ),
+    )
+
+    parser.add_argument(
+        "--he-scene-occlusion-margin-m",
+        type=float,
+        default=0.25,
+        help=(
+            "Depth margin in metres used for CARLA/world-to-HE "
+            "occlusion."
+        ),
+    )
+
     # --------------------------------------------------------
     # Scenario
     # --------------------------------------------------------
@@ -1601,6 +1801,57 @@ def main():
             yaw=60.0,
         )
 
+        # ----------------------------------------------------
+        # Optional scene-depth cameras.
+        #
+        # Each one exactly matches one NEAT native RGB camera.
+        # They are used only by HE for world occlusion.
+        # ----------------------------------------------------
+
+        depth_camera_front = None
+        depth_camera_left = None
+        depth_camera_right = None
+
+        if (
+            args.condition == "he"
+            and
+            args.he_scene_depth_occlusion
+        ):
+
+            depth_camera_front = (
+                make_neat_depth_camera(
+                    world=world,
+                    ego=ego,
+                    yaw=0.0,
+                )
+            )
+
+            depth_camera_left = (
+                make_neat_depth_camera(
+                    world=world,
+                    ego=ego,
+                    yaw=-60.0,
+                )
+            )
+
+            depth_camera_right = (
+                make_neat_depth_camera(
+                    world=world,
+                    ego=ego,
+                    yaw=60.0,
+                )
+            )
+
+            print(
+                "[HE scene occlusion] "
+                "NEAT front/left/right depth cameras enabled"
+            )
+
+            print(
+                "[HE scene occlusion] margin:",
+                f"{args.he_scene_occlusion_margin_m:.3f} m",
+            )
+
         gnss_sensor = make_gnss(
             world,
             ego,
@@ -1621,9 +1872,24 @@ def main():
             ]
         )
 
+        if depth_camera_front is not None:
+
+            actors.extend(
+                [
+                    depth_camera_front,
+                    depth_camera_left,
+                    depth_camera_right,
+                ]
+            )
+
         q_front = queue.Queue()
         q_left = queue.Queue()
         q_right = queue.Queue()
+
+        q_depth_front = None
+        q_depth_left = None
+        q_depth_right = None
+
         q_gnss = queue.Queue()
         q_imu = queue.Queue()
 
@@ -1638,6 +1904,24 @@ def main():
         camera_right.listen(
             q_right.put
         )
+
+        if depth_camera_front is not None:
+
+            q_depth_front = queue.Queue()
+            q_depth_left = queue.Queue()
+            q_depth_right = queue.Queue()
+
+            depth_camera_front.listen(
+                q_depth_front.put
+            )
+
+            depth_camera_left.listen(
+                q_depth_left.put
+            )
+
+            depth_camera_right.listen(
+                q_depth_right.put
+            )
 
         gnss_sensor.listen(
             q_gnss.put
@@ -1708,34 +1992,46 @@ def main():
 
             frame = world.tick()
 
-            get_sensor_frame(
-                q_front,
-                frame,
-                "front",
+            # Initialization only:
+            # do not require exact synchronized sensor frames.
+            #
+            # Some CARLA sensors may begin streaming one frame
+            # later than others when several cameras are attached.
+            # Drain whatever has arrived without blocking.
+            #
+            # Strict synchronization resumes at the first actual
+            # experimental observation.
+
+            drain_sensor_queue_nonblocking(
+                q_front
             )
 
-            get_sensor_frame(
-                q_left,
-                frame,
-                "left",
+            drain_sensor_queue_nonblocking(
+                q_left
             )
 
-            get_sensor_frame(
-                q_right,
-                frame,
-                "right",
+            drain_sensor_queue_nonblocking(
+                q_right
             )
 
-            get_sensor_frame(
-                q_gnss,
-                frame,
-                "GNSS",
+            drain_sensor_queue_nonblocking(
+                q_depth_front
             )
 
-            get_sensor_frame(
-                q_imu,
-                frame,
-                "IMU",
+            drain_sensor_queue_nonblocking(
+                q_depth_left
+            )
+
+            drain_sensor_queue_nonblocking(
+                q_depth_right
+            )
+
+            drain_sensor_queue_nonblocking(
+                q_gnss
+            )
+
+            drain_sensor_queue_nonblocking(
+                q_imu
             )
 
         settled_tf = (
@@ -1826,34 +2122,46 @@ def main():
 
             frame = world.tick()
 
-            get_sensor_frame(
-                q_front,
-                frame,
-                "front",
+            # Initialization only:
+            # do not require exact synchronized sensor frames.
+            #
+            # Some CARLA sensors may begin streaming one frame
+            # later than others when several cameras are attached.
+            # Drain whatever has arrived without blocking.
+            #
+            # Strict synchronization resumes at the first actual
+            # experimental observation.
+
+            drain_sensor_queue_nonblocking(
+                q_front
             )
 
-            get_sensor_frame(
-                q_left,
-                frame,
-                "left",
+            drain_sensor_queue_nonblocking(
+                q_left
             )
 
-            get_sensor_frame(
-                q_right,
-                frame,
-                "right",
+            drain_sensor_queue_nonblocking(
+                q_right
             )
 
-            get_sensor_frame(
-                q_gnss,
-                frame,
-                "GNSS",
+            drain_sensor_queue_nonblocking(
+                q_depth_front
             )
 
-            get_sensor_frame(
-                q_imu,
-                frame,
-                "IMU",
+            drain_sensor_queue_nonblocking(
+                q_depth_left
+            )
+
+            drain_sensor_queue_nonblocking(
+                q_depth_right
+            )
+
+            drain_sensor_queue_nonblocking(
+                q_gnss
+            )
+
+            drain_sensor_queue_nonblocking(
+                q_imu
             )
 
         # ----------------------------------------------------
@@ -2074,6 +2382,54 @@ def main():
                 "right",
             )
         )
+
+        current_depth_front = None
+        current_depth_left = None
+        current_depth_right = None
+
+        if q_depth_front is not None:
+
+            current_depth_front_image = (
+                get_sensor_frame(
+                    q_depth_front,
+                    current_frame,
+                    "depth front",
+                )
+            )
+
+            current_depth_left_image = (
+                get_sensor_frame(
+                    q_depth_left,
+                    current_frame,
+                    "depth left",
+                )
+            )
+
+            current_depth_right_image = (
+                get_sensor_frame(
+                    q_depth_right,
+                    current_frame,
+                    "depth right",
+                )
+            )
+
+            current_depth_front = (
+                carla_depth_image_to_m(
+                    current_depth_front_image
+                )
+            )
+
+            current_depth_left = (
+                carla_depth_image_to_m(
+                    current_depth_left_image
+                )
+            )
+
+            current_depth_right = (
+                carla_depth_image_to_m(
+                    current_depth_right_image
+                )
+            )
 
         current_gnss = (
             get_sensor_frame(
@@ -2493,6 +2849,12 @@ def main():
 
                     fov=
                         100.0,
+
+                    scene_depth_m=
+                        current_depth_front,
+
+                    scene_occlusion_margin_m=
+                        args.he_scene_occlusion_margin_m,
                 )
 
                 (
@@ -2528,6 +2890,12 @@ def main():
 
                     fov=
                         100.0,
+
+                    scene_depth_m=
+                        current_depth_left,
+
+                    scene_occlusion_margin_m=
+                        args.he_scene_occlusion_margin_m,
                 )
 
                 (
@@ -2563,6 +2931,12 @@ def main():
 
                     fov=
                         100.0,
+
+                    scene_depth_m=
+                        current_depth_right,
+
+                    scene_occlusion_margin_m=
+                        args.he_scene_occlusion_margin_m,
                 )
 
             else:
@@ -3728,6 +4102,54 @@ def main():
                     "right",
                 )
             )
+
+            current_depth_front = None
+            current_depth_left = None
+            current_depth_right = None
+
+            if q_depth_front is not None:
+
+                current_depth_front_image = (
+                    get_sensor_frame(
+                        q_depth_front,
+                        current_frame,
+                        "depth front",
+                    )
+                )
+
+                current_depth_left_image = (
+                    get_sensor_frame(
+                        q_depth_left,
+                        current_frame,
+                        "depth left",
+                    )
+                )
+
+                current_depth_right_image = (
+                    get_sensor_frame(
+                        q_depth_right,
+                        current_frame,
+                        "depth right",
+                    )
+                )
+
+                current_depth_front = (
+                    carla_depth_image_to_m(
+                        current_depth_front_image
+                    )
+                )
+
+                current_depth_left = (
+                    carla_depth_image_to_m(
+                        current_depth_left_image
+                    )
+                )
+
+                current_depth_right = (
+                    carla_depth_image_to_m(
+                        current_depth_right_image
+                    )
+                )
 
             current_gnss = (
                 get_sensor_frame(

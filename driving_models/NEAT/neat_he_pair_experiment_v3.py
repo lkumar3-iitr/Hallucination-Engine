@@ -169,6 +169,8 @@ def main():
         width,
         height,
         fov,
+        scene_depth_m=None,
+        scene_occlusion_margin_m=0.25,
     ):
 
         # Old sprite_bank and available_angles are deliberately
@@ -198,6 +200,12 @@ def main():
             bottom_y_offset_px=(
                 v3_args.he_bottom_y_offset_px
             ),
+
+            scene_depth_m=
+                scene_depth_m,
+
+            scene_occlusion_margin_m=
+                scene_occlusion_margin_m,
         )
 
     # --------------------------------------------------------
