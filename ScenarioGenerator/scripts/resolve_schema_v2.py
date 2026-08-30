@@ -15,7 +15,13 @@ sys.path.insert(
     0,
     str(PROJECT_ROOT),
 )
+from scenario_generator.planner.semantic_scenario_v2 import (
+    SemanticScenarioV2,
+)
 
+from scenario_generator.planner.conditional_scenario_compiler_v2 import (
+    compile_semantic_scenario_with_events,
+)
 
 from scenario_generator.schema.scenario_schema_v2 import (
     ScenarioSpecV2,
@@ -72,20 +78,44 @@ def main():
         type=str,
         default=None,
     )
-
+    parser.add_argument(
+        "--semantic",
+        action="store_true",
+        help=(
+            "Treat input JSON as SemanticScenarioV2 "
+            "and compile semantic/event behavior "
+            "offline before trajectory resolution."
+        ),
+    )
     args = parser.parse_args()
 
     input_path = Path(
         args.scenario
     )
 
-    scenario = (
-        ScenarioSpecV2.model_validate(
-            load_json(
-                input_path
+    input_data = load_json(
+        input_path
+    )
+
+    if args.semantic:
+        semantic = (
+            SemanticScenarioV2.model_validate(
+                input_data
             )
         )
-    )
+
+        scenario = (
+            compile_semantic_scenario_with_events(
+                semantic
+            )
+        )
+
+    else:
+        scenario = (
+            ScenarioSpecV2.model_validate(
+                input_data
+            )
+        )
 
     resolver = (
         V2TrajectoryResolver()

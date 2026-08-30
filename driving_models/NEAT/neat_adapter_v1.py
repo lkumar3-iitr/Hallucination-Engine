@@ -947,3 +947,5 @@ class NEATAdapterV1(
             })
 
         return out
+    
+ADAPTER_CLASS = NEATAdapterV1

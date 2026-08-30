@@ -287,7 +287,102 @@ class KeyframeMotionV2(BaseModel):
 
         return self
 
+# ============================================================
+# Motion mode 4: physical behavior sequence
+# ============================================================
 
+class CruiseStepV2(BaseModel):
+    step: Literal["cruise"] = "cruise"
+    duration_s: float = Field(gt=0.0)
+    speed_mps: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+    )
+
+
+class LaneChangeStepV2(BaseModel):
+    step: Literal["lane_change"] = "lane_change"
+
+    # ScenarioGenerator convention:
+    # positive = left, negative = right.
+    lateral_delta_m: float
+
+    duration_s: float = Field(
+        gt=0.0,
+    )
+
+
+class AccelerateStepV2(BaseModel):
+    step: Literal["accelerate"] = "accelerate"
+
+    target_speed_mps: float = Field(
+        ge=0.0,
+    )
+
+    acceleration_mps2: float = Field(
+        gt=0.0,
+    )
+
+
+class BrakeStepV2(BaseModel):
+    step: Literal["brake"] = "brake"
+
+    target_speed_mps: float = Field(
+        default=0.0,
+        ge=0.0,
+    )
+
+    deceleration_mps2: float = Field(
+        gt=0.0,
+    )
+
+
+class HoldStepV2(BaseModel):
+    step: Literal["hold"] = "hold"
+
+    duration_s: float = Field(
+        gt=0.0,
+    )
+
+
+SequenceStepV2 = Annotated[
+    Union[
+        CruiseStepV2,
+        LaneChangeStepV2,
+        AccelerateStepV2,
+        BrakeStepV2,
+        HoldStepV2,
+    ],
+    Field(discriminator="step"),
+]
+
+
+class SequenceMotionV2(BaseModel):
+    """
+    Ordered deterministic physical behavior.
+
+    This is still backend-independent.  It describes actor motion,
+    not CARLA controls or HE rendering.
+
+    Each step begins from the exact physical state produced by the
+    previous step.
+    """
+
+    mode: Literal["sequence"] = "sequence"
+
+    initial_speed_mps: float = Field(
+        default=0.0,
+        ge=0.0,
+    )
+
+    steps: list[SequenceStepV2] = Field(
+        min_length=1,
+    )
+
+    end_behavior: Literal[
+        "hold",
+        "continue",
+    ] = "hold"
 # ============================================================
 # Discriminated motion union
 # ============================================================
@@ -297,6 +392,7 @@ ActorMotionV2 = Annotated[
         ManeuverMotionV2,
         PathMotionV2,
         KeyframeMotionV2,
+        SequenceMotionV2,
     ],
     Field(discriminator="mode"),
 ]

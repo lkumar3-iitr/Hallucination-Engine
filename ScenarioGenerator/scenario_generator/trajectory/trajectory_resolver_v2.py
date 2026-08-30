@@ -49,6 +49,12 @@ from scenario_generator.schema.scenario_schema_v2 import (
     PathMotionV2,
     Pose2DV2,
     ScenarioSpecV2,
+    AccelerateStepV2,
+    BrakeStepV2,
+    CruiseStepV2,
+    HoldStepV2,
+    LaneChangeStepV2,
+    SequenceMotionV2,
 )
 
 
@@ -1020,7 +1026,394 @@ def resolve_maneuver_state(
         vy_mps=vy,
     )
 
+# ============================================================
+# Sequence motion resolver
+# ============================================================
 
+def _state_with_speed(
+    x_m: float,
+    y_m: float,
+    yaw_deg: float,
+    speed_mps: float,
+) -> MotionState:
+    yaw_rad = math.radians(yaw_deg)
+
+    return MotionState(
+        x_m=x_m,
+        y_m=y_m,
+        yaw_deg=normalize_yaw_deg(yaw_deg),
+        speed_mps=speed_mps,
+        vx_mps=speed_mps * math.cos(yaw_rad),
+        vy_mps=speed_mps * math.sin(yaw_rad),
+    )
+
+
+def _sequence_step_duration(
+    step,
+    start_speed_mps: float,
+) -> float:
+
+    if isinstance(step, CruiseStepV2):
+        return step.duration_s
+
+    if isinstance(step, LaneChangeStepV2):
+        return step.duration_s
+
+    if isinstance(step, HoldStepV2):
+        return step.duration_s
+
+    if isinstance(step, AccelerateStepV2):
+        if (
+            step.target_speed_mps
+            < start_speed_mps - EPS
+        ):
+            raise ValueError(
+                "AccelerateStepV2 target speed is below "
+                "the current speed. Use BrakeStepV2."
+            )
+
+        return (
+            step.target_speed_mps
+            - start_speed_mps
+        ) / step.acceleration_mps2
+
+    if isinstance(step, BrakeStepV2):
+        if (
+            step.target_speed_mps
+            > start_speed_mps + EPS
+        ):
+            raise ValueError(
+                "BrakeStepV2 target speed is above "
+                "the current speed. Use AccelerateStepV2."
+            )
+
+        return (
+            start_speed_mps
+            - step.target_speed_mps
+        ) / step.deceleration_mps2
+
+    raise TypeError(
+        f"Unknown sequence step: {type(step)}"
+    )
+
+
+def _resolve_sequence_step(
+    start: MotionState,
+    step,
+    elapsed_s: float,
+) -> MotionState:
+
+    yaw0_deg = start.yaw_deg
+    yaw0_rad = math.radians(yaw0_deg)
+
+    # --------------------------------------------------------
+    # Cruise
+    # --------------------------------------------------------
+
+    if isinstance(step, CruiseStepV2):
+
+        speed = (
+            start.speed_mps
+            if step.speed_mps is None
+            else step.speed_mps
+        )
+
+        distance = speed * elapsed_s
+
+        return _state_with_speed(
+            x_m=(
+                start.x_m
+                + distance * math.cos(yaw0_rad)
+            ),
+            y_m=(
+                start.y_m
+                + distance * math.sin(yaw0_rad)
+            ),
+            yaw_deg=yaw0_deg,
+            speed_mps=speed,
+        )
+
+    # --------------------------------------------------------
+    # Hold
+    # --------------------------------------------------------
+
+    if isinstance(step, HoldStepV2):
+
+        return _state_with_speed(
+            x_m=start.x_m,
+            y_m=start.y_m,
+            yaw_deg=yaw0_deg,
+            speed_mps=0.0,
+        )
+
+    # --------------------------------------------------------
+    # Accelerate
+    # --------------------------------------------------------
+
+    if isinstance(step, AccelerateStepV2):
+
+        v0 = start.speed_mps
+        a = step.acceleration_mps2
+
+        speed = min(
+            step.target_speed_mps,
+            v0 + a * elapsed_s,
+        )
+
+        distance = (
+            v0 * elapsed_s
+            + 0.5 * a * elapsed_s * elapsed_s
+        )
+
+        return _state_with_speed(
+            x_m=(
+                start.x_m
+                + distance * math.cos(yaw0_rad)
+            ),
+            y_m=(
+                start.y_m
+                + distance * math.sin(yaw0_rad)
+            ),
+            yaw_deg=yaw0_deg,
+            speed_mps=speed,
+        )
+
+    # --------------------------------------------------------
+    # Brake
+    # --------------------------------------------------------
+
+    if isinstance(step, BrakeStepV2):
+
+        v0 = start.speed_mps
+        a = step.deceleration_mps2
+
+        speed = max(
+            step.target_speed_mps,
+            v0 - a * elapsed_s,
+        )
+
+        distance = (
+            v0 * elapsed_s
+            - 0.5 * a * elapsed_s * elapsed_s
+        )
+
+        distance = max(
+            0.0,
+            distance,
+        )
+
+        return _state_with_speed(
+            x_m=(
+                start.x_m
+                + distance * math.cos(yaw0_rad)
+            ),
+            y_m=(
+                start.y_m
+                + distance * math.sin(yaw0_rad)
+            ),
+            yaw_deg=yaw0_deg,
+            speed_mps=speed,
+        )
+
+    # --------------------------------------------------------
+    # Lane change
+    # --------------------------------------------------------
+
+    if isinstance(step, LaneChangeStepV2):
+
+        if (
+            abs(step.lateral_delta_m) > EPS
+            and start.speed_mps <= EPS
+        ):
+            raise ValueError(
+                "Lane change requires non-zero "
+                "longitudinal speed."
+            )
+
+        duration = step.duration_s
+
+        u = max(
+            0.0,
+            min(
+                1.0,
+                elapsed_s / duration,
+            ),
+        )
+
+        lateral = (
+            step.lateral_delta_m
+            * smoothstep(u)
+        )
+
+        lateral_speed = (
+            step.lateral_delta_m
+            * smoothstep_derivative(u)
+            / duration
+        )
+
+        forward = (
+            start.speed_mps
+            * elapsed_s
+        )
+
+        # Local vehicle frame:
+        #
+        # forward = ( cos(yaw), sin(yaw) )
+        # left    = (-sin(yaw), cos(yaw) )
+        #
+        # Therefore positive lateral_delta_m means LEFT.
+
+        x = (
+            start.x_m
+            + forward * math.cos(yaw0_rad)
+            - lateral * math.sin(yaw0_rad)
+        )
+
+        y = (
+            start.y_m
+            + forward * math.sin(yaw0_rad)
+            + lateral * math.cos(yaw0_rad)
+        )
+
+        vx = (
+            start.speed_mps * math.cos(yaw0_rad)
+            - lateral_speed * math.sin(yaw0_rad)
+        )
+
+        vy = (
+            start.speed_mps * math.sin(yaw0_rad)
+            + lateral_speed * math.cos(yaw0_rad)
+        )
+
+        speed = math.hypot(
+            vx,
+            vy,
+        )
+
+        if speed > EPS:
+            yaw = math.degrees(
+                math.atan2(
+                    vy,
+                    vx,
+                )
+            )
+        else:
+            yaw = yaw0_deg
+
+        return MotionState(
+            x_m=x,
+            y_m=y,
+            yaw_deg=normalize_yaw_deg(yaw),
+            speed_mps=speed,
+            vx_mps=vx,
+            vy_mps=vy,
+        )
+
+    raise TypeError(
+        f"Unknown sequence step: {type(step)}"
+    )
+
+
+def resolve_sequence_state(
+    spawn: Pose2DV2,
+    motion: SequenceMotionV2,
+    t_s: float,
+    active_start_s: float,
+) -> MotionState:
+    """
+    Resolve an ordered physical behavior sequence.
+
+    Every state is reconstructed deterministically from the sequence
+    start so results do not depend on frame rate or previous calls.
+    """
+
+    state = _state_with_speed(
+        x_m=spawn.x_m,
+        y_m=spawn.y_m,
+        yaw_deg=spawn.yaw_deg,
+        speed_mps=motion.initial_speed_mps,
+    )
+
+    remaining = max(
+        0.0,
+        t_s - active_start_s,
+    )
+
+    for step in motion.steps:
+
+        duration = _sequence_step_duration(
+            step,
+            state.speed_mps,
+        )
+
+        # Zero-duration speed transition.
+        if duration <= EPS:
+            state = _resolve_sequence_step(
+                state,
+                step,
+                0.0,
+            )
+            continue
+
+        # Current time lies inside this step.
+        if remaining < duration - EPS:
+            return _resolve_sequence_step(
+                state,
+                step,
+                remaining,
+            )
+
+        # Resolve exact end of completed step.
+        state = _resolve_sequence_step(
+            state,
+            step,
+            duration,
+        )
+
+        remaining -= duration
+
+        if remaining < EPS:
+            return state
+
+    # --------------------------------------------------------
+    # After sequence
+    # --------------------------------------------------------
+
+    if (
+        motion.end_behavior == "continue"
+        and remaining > EPS
+    ):
+        distance = (
+            state.speed_mps
+            * remaining
+        )
+
+        yaw_rad = math.radians(
+            state.yaw_deg
+        )
+
+        return _state_with_speed(
+            x_m=(
+                state.x_m
+                + distance * math.cos(yaw_rad)
+            ),
+            y_m=(
+                state.y_m
+                + distance * math.sin(yaw_rad)
+            ),
+            yaw_deg=state.yaw_deg,
+            speed_mps=state.speed_mps,
+        )
+
+    if remaining > EPS:
+        return _state_with_speed(
+            x_m=state.x_m,
+            y_m=state.y_m,
+            yaw_deg=state.yaw_deg,
+            speed_mps=0.0,
+        )
+
+    return state
 # ============================================================
 # Keyframe resolver
 # ============================================================
@@ -1322,6 +1715,16 @@ class PreparedMotion:
                 self.spawn,
                 motion,
                 t_s,
+            )
+        if isinstance(
+            motion,
+            SequenceMotionV2,
+        ):
+            return resolve_sequence_state(
+                spawn=self.spawn,
+                motion=motion,
+                t_s=t_s,
+                active_start_s=active_start_s,
             )
 
         if isinstance(

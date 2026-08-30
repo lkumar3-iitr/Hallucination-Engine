@@ -686,3 +686,6 @@ class TCPAdapterV1(
         })
 
         return out
+
+
+ADAPTER_CLASS = TCPAdapterV1

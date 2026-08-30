@@ -6,8 +6,8 @@ Generic HE-only closed-loop experiment runner.
 This runner is model-independent.
 
 Supported adapters:
-    tcp
-    neat
+    Dynamically discovered through:
+        driving_models/<MODEL>/<model>_adapter_v1.py
 
 The runner owns:
     - CARLA world
@@ -40,8 +40,9 @@ import argparse
 import csv
 import math
 import sys
+import importlib.util
 from pathlib import Path
-
+import cv2
 import carla
 import numpy as np
 
@@ -60,30 +61,11 @@ COMMON_DIR = (
     / "common"
 )
 
-TCP_DIR = (
-    HE_ROOT
-    / "driving_models"
-    / "TCP"
-)
-
-NEAT_DIR = (
-    HE_ROOT
-    / "driving_models"
-    / "NEAT"
-)
-
-for path in (
-    COMMON_DIR,
-    TCP_DIR,
-    NEAT_DIR,
-):
-    text = str(path)
-
-    if text not in sys.path:
-        sys.path.insert(
-            0,
-            text,
-        )
+if str(COMMON_DIR) not in sys.path:
+    sys.path.insert(
+        0,
+        str(COMMON_DIR),
+    )
 
 
 # ============================================================
@@ -106,19 +88,19 @@ from scenario_execution_runtime_v1 import (
     ExecutionWorldOrigin,
     load_execution_runtime,
 )
+from route_progress_metrics_v1 import (
+    RouteProjector,
+    compute_route_pair_metrics,
+    route_virtual_collision,
+)
 
+from traffic_light_schedule_v1 import (
+    TrafficLightScheduleExecutor,
+)
 
 # ============================================================
 # Model adapters
 # ============================================================
-
-from tcp_adapter_v1 import (
-    TCPAdapterV1,
-)
-
-from neat_adapter_v1 import (
-    NEATAdapterV1,
-)
 
 
 # ============================================================
@@ -144,14 +126,6 @@ DEFAULT_OUTPUT_ROOT = (
 # ============================================================
 # Model registry
 # ============================================================
-
-MODEL_REGISTRY = {
-    "tcp":
-        TCPAdapterV1,
-
-    "neat":
-        NEATAdapterV1,
-}
 
 
 # ============================================================
@@ -205,6 +179,179 @@ def carla_image_to_rgb(
         .copy()
     )
 
+def make_camera_mosaic_bgr(
+    rgb_by_camera,
+    camera_names,
+):
+    """
+    Build a left-to-right debug mosaic of every native model camera.
+
+    The images passed here are exactly the HE-composited RGB images
+    supplied to the driving model.
+
+    Cameras with different heights are resized to a common height while
+    preserving aspect ratio. This affects only the saved debug video,
+    never the model input.
+    """
+
+    frames = []
+
+    for camera_name in camera_names:
+
+        frame = rgb_by_camera.get(
+            camera_name
+        )
+
+        if frame is None:
+            continue
+
+        frame = np.asarray(
+            frame
+        )
+
+        if (
+            frame.ndim != 3
+            or
+            frame.shape[2] != 3
+        ):
+            raise RuntimeError(
+                f"Invalid RGB frame for "
+                f"{camera_name}: "
+                f"{frame.shape}"
+            )
+
+        frames.append(
+            (
+                str(camera_name),
+                frame,
+            )
+        )
+
+    if not frames:
+        return None
+
+    target_height = max(
+        int(frame.shape[0])
+        for _name, frame in frames
+    )
+
+    tiles = []
+
+    for camera_name, frame_rgb in frames:
+
+        h = int(
+            frame_rgb.shape[0]
+        )
+
+        w = int(
+            frame_rgb.shape[1]
+        )
+
+        if h != target_height:
+
+            scale = (
+                float(target_height)
+                /
+                float(h)
+            )
+
+            target_width = max(
+                1,
+                int(
+                    round(
+                        float(w)
+                        *
+                        scale
+                    )
+                ),
+            )
+
+            interpolation = (
+                cv2.INTER_AREA
+                if target_height < h
+                else cv2.INTER_LINEAR
+            )
+
+            frame_rgb = cv2.resize(
+                frame_rgb,
+                (
+                    target_width,
+                    target_height,
+                ),
+                interpolation=interpolation,
+            )
+
+        # OpenCV VideoWriter expects BGR.
+        tile = (
+            frame_rgb[
+                :,
+                :,
+                ::-1
+            ]
+            .copy()
+        )
+
+        # Debug label only; does not affect model input.
+        cv2.putText(
+            tile,
+            camera_name,
+            (8, 22),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+
+        cv2.putText(
+            tile,
+            camera_name,
+            (8, 22),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (0, 0, 0),
+            1,
+            cv2.LINE_AA,
+        )
+
+        tiles.append(
+            tile
+        )
+
+    if len(tiles) == 1:
+        return tiles[0]
+
+    # Small separator between native camera views.
+    separator_width_px = 6
+
+    separator = np.zeros(
+        (
+            target_height,
+            separator_width_px,
+            3,
+        ),
+        dtype=np.uint8,
+    )
+
+    mosaic_parts = []
+
+    for index, tile in enumerate(
+        tiles
+    ):
+
+        if index > 0:
+            mosaic_parts.append(
+                separator
+            )
+
+        mosaic_parts.append(
+            tile
+        )
+
+    return np.concatenate(
+        mosaic_parts,
+        axis=1,
+    )
 
 # ============================================================
 # Generic route helpers
@@ -653,7 +800,150 @@ def build_execution_origin(
             ego0_tf.rotation.yaw
         ),
     )
+def execution_actor_to_carla_transform(
+    carla_map,
+    state,
+):
+    location = carla.Location(
+        x=float(state.world_x_m),
+        y=float(state.world_y_m),
+        z=float(state.world_z_m),
+    )
 
+    waypoint = carla_map.get_waypoint(
+        location,
+        project_to_road=True,
+        lane_type=carla.LaneType.Driving,
+    )
+
+    if waypoint is not None:
+        z = float(
+            waypoint.transform.location.z
+        ) + 0.05
+
+        pitch = float(
+            waypoint.transform.rotation.pitch
+        )
+
+        roll = float(
+            waypoint.transform.rotation.roll
+        )
+    else:
+        z = float(state.world_z_m) + 0.05
+        pitch = 0.0
+        roll = 0.0
+
+    return carla.Transform(
+        carla.Location(
+            x=float(state.world_x_m),
+            y=float(state.world_y_m),
+            z=z,
+        ),
+        carla.Rotation(
+            pitch=pitch,
+            yaw=float(state.world_yaw_deg),
+            roll=roll,
+        ),
+    )
+
+
+def sync_carla_scenario_actors(
+    world,
+    carla_map,
+    actor_by_id,
+    active_states,
+):
+    active_ids = set()
+
+    for state in active_states:
+        actor_id = str(
+            state.actor_id
+        )
+
+        active_ids.add(
+            actor_id
+        )
+
+        transform = (
+            execution_actor_to_carla_transform(
+                carla_map,
+                state,
+            )
+        )
+
+        actor = actor_by_id.get(
+            actor_id
+        )
+
+        if actor is None:
+            blueprint = (
+                world
+                .get_blueprint_library()
+                .find(
+                    state.carla_blueprint
+                )
+            )
+
+            if blueprint.has_attribute(
+                "role_name"
+            ):
+                blueprint.set_attribute(
+                    "role_name",
+                    "scenario_actor",
+                )
+
+            actor = world.try_spawn_actor(
+                blueprint,
+                transform,
+            )
+
+            if actor is None:
+                raise RuntimeError(
+                    "Could not spawn scenario actor "
+                    f"{actor_id}: "
+                    f"{state.carla_blueprint}"
+                )
+
+            try:
+                actor.set_simulate_physics(
+                    False
+                )
+            except Exception:
+                pass
+
+            actor_by_id[
+                actor_id
+            ] = actor
+
+            print(
+                "[CARLA scenario actor]",
+                actor_id,
+                "->",
+                state.carla_blueprint,
+                "runtime_id=",
+                actor.id,
+            )
+
+        actor.set_transform(
+            transform
+        )
+
+    # Actors outside their active interval are hidden.
+    for actor_id, actor in (
+        actor_by_id.items()
+    ):
+        if actor_id in active_ids:
+            continue
+
+        transform = (
+            actor.get_transform()
+        )
+
+        transform.location.z = -1000.0
+
+        actor.set_transform(
+            transform
+        )
 
 # ============================================================
 # HE compositor diagnostics
@@ -662,7 +952,8 @@ def build_execution_origin(
 def rendered_rows(
     composite,
 ):
-
+    if composite is None:
+        return []
     return [
         row
         for row
@@ -719,31 +1010,136 @@ def join_actor_ids(
 # Adapter
 # ============================================================
 
-def create_adapter(
-    args,
+def load_adapter_class(
+    model_name,
 ):
+    """
+    Dynamically discover a driving-model adapter.
+
+    Convention:
+
+        --model tcp
+            driving_models/TCP/tcp_adapter_v1.py
+
+        --model neat
+            driving_models/NEAT/neat_adapter_v1.py
+
+        --model cilpp
+            driving_models/CILPP/cilpp_adapter_v1.py
+
+        --model aim
+            driving_models/AIM/aim_adapter_v1.py
+
+    Every adapter module exposes:
+
+        ADAPTER_CLASS = ...
+    """
 
     model_name = (
-        str(
-            args.model
-        )
+        str(model_name)
         .strip()
         .lower()
     )
 
-    if (
-        model_name
-        not in MODEL_REGISTRY
-    ):
-
-        raise KeyError(
-            f"Unknown model: {model_name}"
+    if not model_name:
+        raise ValueError(
+            "Model name cannot be empty."
         )
 
+    model_folder = (
+        HE_ROOT
+        / "driving_models"
+        / model_name.upper()
+    )
+
+    adapter_file = (
+        model_folder
+        / f"{model_name}_adapter_v1.py"
+    )
+
+    if not adapter_file.exists():
+
+        raise FileNotFoundError(
+            "Could not find model adapter:\n"
+            f"{adapter_file}\n\n"
+            "Expected convention:\n"
+            "driving_models\\MODEL\\model_adapter_v1.py"
+        )
+
+    # Make model-local imports work.
+    model_folder_text = str(
+        model_folder
+    )
+
+    if (
+        model_folder_text
+        not in sys.path
+    ):
+
+        sys.path.insert(
+            0,
+            model_folder_text,
+        )
+
+    module_name = (
+        f"he_dynamic_adapter_"
+        f"{model_name}"
+    )
+
+    spec = (
+        importlib.util
+        .spec_from_file_location(
+            module_name,
+            adapter_file,
+        )
+    )
+
+    if (
+        spec is None
+        or
+        spec.loader is None
+    ):
+
+        raise ImportError(
+            f"Could not load adapter module: "
+            f"{adapter_file}"
+        )
+
+    module = (
+        importlib.util
+        .module_from_spec(
+            spec
+        )
+    )
+
+    spec.loader.exec_module(
+        module
+    )
+
+    adapter_cls = getattr(
+        module,
+        "ADAPTER_CLASS",
+        None,
+    )
+
+    if adapter_cls is None:
+
+        raise AttributeError(
+            f"{adapter_file} does not expose "
+            "ADAPTER_CLASS."
+        )
+
+    return adapter_cls
+
+
+def create_adapter(
+    args,
+):
+
     adapter_cls = (
-        MODEL_REGISTRY[
-            model_name
-        ]
+        load_adapter_class(
+            args.model
+        )
     )
 
     return adapter_cls(
@@ -773,8 +1169,9 @@ def main():
     parser.add_argument(
         "--model",
         required=True,
-        choices=sorted(
-            MODEL_REGISTRY.keys()
+        help=(
+            "Driving model adapter name, e.g. "
+            "tcp, neat, cilpp, aim."
         ),
     )
 
@@ -804,7 +1201,43 @@ def main():
     # --------------------------------------------------------
     # Scenario / HE
     # --------------------------------------------------------
+    parser.add_argument(
+        "--environment-json",
+        default=None,
+        help=(
+            "Optional ScenarioGenerator environment sidecar "
+            "for deterministic traffic-light schedules."
+        ),
+    )
 
+    parser.add_argument(
+        "--route-metrics-csv",
+        default=None,
+        help=(
+            "Optional inspected route CSV used for "
+            "turn-aware gap/TTC metrics."
+        ),
+    )
+
+    parser.add_argument(
+        "--metric-actor-id",
+        default=None,
+        help=(
+            "Scenario actor used for pairwise route/safety "
+            "metrics. If omitted and exactly one actor is "
+            "active, that actor is used."
+        ),
+    )
+
+    parser.add_argument(
+        "--event-start-s",
+        type=float,
+        default=None,
+        help=(
+            "Scenario safety-event start time. Logged so "
+            "response-time metrics can be calculated later."
+        ),
+    )
     parser.add_argument(
         "--resolved",
         default=str(
@@ -823,7 +1256,11 @@ def main():
             DEFAULT_MANIFEST
         ),
     )
-
+    parser.add_argument(
+        "--condition",
+        choices=["he", "carla"],
+        default="he",
+    )
     parser.add_argument(
         "--distance-selection-mode",
         choices=[
@@ -947,7 +1384,19 @@ def main():
             DEFAULT_OUTPUT_ROOT
         ),
     )
+    parser.add_argument(
+        "--save-video",
+        action="store_true",
+    )
 
+    parser.add_argument(
+        "--video-camera",
+        default=None,
+        help=(
+            "Native camera to save. "
+            "Defaults to rgb_central/front/first camera."
+        ),
+    )
     args = parser.parse_args()
 
     # ========================================================
@@ -997,7 +1446,8 @@ def main():
         adapter.summary(),
     )
     print(
-        "condition : HE"
+        "condition :",
+        args.condition.upper(),
     )
     print("=" * 78)
     print()
@@ -1033,9 +1483,12 @@ def main():
     )
 
     actors = []
-
+    scenario_carla_actors = {}
     csv_fp = None
-
+    video_writer = None
+    mosaic_writer = None
+    mosaic_path = None
+    traffic_light_executor = None
     try:
 
         # ====================================================
@@ -1164,12 +1617,26 @@ def main():
         # Ego
         # ====================================================
 
+        ego_blueprint = (
+            "vehicle.lincoln.mkz_2017"
+            if args.model in {
+                "cilpp",
+                "aimmt",
+            }
+            else "vehicle.tesla.model3"
+        )
+
         ego_bp = (
             world
             .get_blueprint_library()
-            .filter(
-                "vehicle.tesla.model3"
-            )[0]
+            .find(
+                ego_blueprint
+            )
+        )
+
+        print(
+            "[ego blueprint]",
+            ego_blueprint,
         )
 
         if ego_bp.has_attribute(
@@ -1404,7 +1871,108 @@ def main():
                     ),
             )
         )
+        # ====================================================
+        # Turn-aware benchmark metrics
+        # ====================================================
 
+        route_projector = None
+
+        route_metric_ego_segment = None
+        route_metric_actor_segment = None
+
+        ego_bb = ego.bounding_box
+
+        ego_length_m = (
+            2.0
+            *
+            float(
+                ego_bb.extent.x
+            )
+        )
+
+        ego_width_m = (
+            2.0
+            *
+            float(
+                ego_bb.extent.y
+            )
+        )
+
+        if args.route_metrics_csv is not None:
+
+            route_projector = (
+                RouteProjector.from_csv(
+                    args.route_metrics_csv
+                )
+            )
+
+            print(
+                "[route metrics]",
+                Path(
+                    args.route_metrics_csv
+                ).resolve(),
+            )
+
+            print(
+                "[route metrics length]",
+                f"{route_projector.total_length_m:.2f} m",
+            )
+
+            print(
+                "[ego physical dimensions]",
+                f"L={ego_length_m:.3f} "
+                f"W={ego_width_m:.3f}",
+            )
+
+        # ====================================================
+        # Deterministic environment schedule
+        # ====================================================
+
+        if args.environment_json is not None:
+
+            traffic_light_executor = (
+                TrafficLightScheduleExecutor.from_json(
+                    world=world,
+                    carla_module=carla,
+                    path=args.environment_json,
+                )
+            )
+
+            traffic_light_executor.initialize()
+
+            start_t_s = (
+                float(start_frame)
+                /
+                float(fps)
+            )
+
+            traffic_light_executor.apply(
+                start_t_s
+            )
+
+            print(
+                "[environment]",
+                Path(
+                    args.environment_json
+                ).resolve(),
+            )
+
+            print(
+                "[traffic-light initial state]",
+                traffic_light_executor
+                .primary_state_name(
+                    start_t_s
+                ),
+            )
+        if args.condition == "carla":
+            sync_carla_scenario_actors(
+                world=world,
+                carla_map=carla_map,
+                actor_by_id=scenario_carla_actors,
+                active_states=runtime.active_actors(
+                    start_frame
+                ),
+            )
         # ====================================================
         # Initial synchronized observation
         # ====================================================
@@ -1443,7 +2011,7 @@ def main():
             (
                 f"{scenario_id}_"
                 f"{adapter.model_name}_"
-                f"he.csv"
+                f"{args.condition}.csv"
             )
         )
 
@@ -1464,7 +2032,85 @@ def main():
         camera_names = (
             adapter.camera_names()
         )
+        # ====================================================
+        # Video camera
+        # ====================================================
 
+        video_camera = None
+        video_path = None
+
+        if args.save_video:
+
+            if args.video_camera is not None:
+
+                video_camera = str(
+                    args.video_camera
+                )
+
+            elif "rgb_central" in camera_names:
+
+                video_camera = "rgb_central"
+
+            elif "front" in camera_names:
+
+                video_camera = "front"
+
+            else:
+
+                video_camera = camera_names[0]
+
+            if video_camera not in camera_names:
+
+                raise ValueError(
+                    f"Unknown video camera "
+                    f"{video_camera!r}. "
+                    f"Available: {camera_names}"
+                )
+
+            spec_map = {
+                spec.name: spec
+                for spec in adapter.camera_specs()
+            }
+
+            video_spec = (
+                spec_map[
+                    video_camera
+                ]
+            )
+
+            video_path = (
+                output_dir
+                /
+                (
+                    f"{scenario_id}_"
+                    f"{adapter.model_name}_"
+                    f"{args.condition}_{video_camera}.mp4"
+                )
+            )
+
+            video_writer = cv2.VideoWriter(
+                str(video_path),
+                cv2.VideoWriter_fourcc(
+                    *"mp4v"
+                ),
+                float(fps),
+                (
+                    int(video_spec.width),
+                    int(video_spec.height),
+                ),
+            )
+
+            if not video_writer.isOpened():
+
+                raise RuntimeError(
+                    "Could not open video writer: "
+                    f"{video_path}"
+                )
+
+            print(
+                "[VIDEO]",
+                video_path,
+            )
         csv_fields = [
             "scenario_id",
             "model",
@@ -1473,6 +2119,8 @@ def main():
             "scenario_frame",
             "carla_frame",
             "t_s",
+            "traffic_light_state",
+            "event_start_s",
 
             "ego_x",
             "ego_y",
@@ -1495,6 +2143,25 @@ def main():
             "target_y",
 
             "active_actor_count",
+            "metric_actor_id",
+            "metric_actor_speed_mps",
+
+            "ego_route_progress_m",
+            "actor_route_progress_m",
+
+            "route_center_gap_m",
+            "route_bumper_gap_m",
+
+            "ego_route_lateral_m",
+            "actor_route_lateral_m",
+            "route_lateral_separation_m",
+
+            "ego_route_speed_mps",
+            "actor_route_speed_mps",
+            "route_closing_speed_mps",
+
+            "route_ttc_s",
+            "route_virtual_collision",
         ]
 
         for camera_name in (
@@ -1505,6 +2172,24 @@ def main():
                 f"{camera_name}_rendered_count",
                 f"{camera_name}_rendered_ids",
                 f"{camera_name}_nearest_depth_m",
+
+                f"{camera_name}_selected_angle",
+                f"{camera_name}_selected_distance_m",
+                f"{camera_name}_selected_elevation_deg",
+
+                f"{camera_name}_anchor_mode",
+
+                f"{camera_name}_source_anchor_x_px",
+                f"{camera_name}_source_anchor_y_px",
+
+                f"{camera_name}_target_anchor_x_px",
+                f"{camera_name}_target_anchor_y_px",
+
+                f"{camera_name}_legacy_source_anchor_x_px",
+                f"{camera_name}_legacy_source_anchor_y_px",
+
+                f"{camera_name}_paste_x1",
+                f"{camera_name}_paste_y1",
             ])
 
         csv_fp = open(
@@ -1618,35 +2303,51 @@ def main():
                     ]
                 )
 
-                composite = (
-                    compositor.render(
-                        base_rgb=
-                            base_rgb_by_camera[
-                                camera_name
-                            ],
+                if args.condition == "he":
 
-                        camera_tf=
-                            camera_sample.transform,
+                    composite = (
+                        compositor.render(
+                            base_rgb=
+                                base_rgb_by_camera[
+                                    camera_name
+                                ],
 
-                        active_actors=
-                            active_actors,
+                            camera_tf=
+                                camera_sample.transform,
 
-                        width=
-                            int(
-                                spec.width
-                            ),
+                            active_actors=
+                                active_actors,
 
-                        height=
-                            int(
-                                spec.height
-                            ),
+                            width=
+                                int(
+                                    spec.width
+                                ),
 
-                        fov=
-                            float(
-                                spec.fov_deg
-                            ),
+                            height=
+                                int(
+                                    spec.height
+                                ),
+
+                            fov=
+                                float(
+                                    spec.fov_deg
+                                ),
+                        )
                     )
-                )
+
+                    output_rgb = (
+                        composite.rgb
+                    )
+
+                else:
+
+                    composite = None
+
+                    output_rgb = (
+                        base_rgb_by_camera[
+                            camera_name
+                        ]
+                    )
 
                 composite_by_camera[
                     camera_name
@@ -1657,9 +2358,114 @@ def main():
                 rgb_by_camera[
                     camera_name
                 ] = (
-                    composite.rgb
+                    output_rgb
                 )
 
+            # ------------------------------------------------
+            # Save HE-composited native-camera video
+            # ------------------------------------------------
+
+            if video_writer is not None:
+
+                video_rgb = (
+                    rgb_by_camera[
+                        video_camera
+                    ]
+                )
+
+                video_bgr = cv2.cvtColor(
+                    video_rgb,
+                    cv2.COLOR_RGB2BGR,
+                )
+
+                video_writer.write(
+                    video_bgr
+                )
+            # ------------------------------------------------
+            # Multi-camera debug mosaic
+            #
+            # This uses the exact HE-composited images supplied
+            # to the driving model.
+            # ------------------------------------------------
+
+            if (
+                args.save_video
+                and
+                len(camera_names) > 1
+            ):
+
+                mosaic_bgr = (
+                    make_camera_mosaic_bgr(
+                        rgb_by_camera=
+                            rgb_by_camera,
+
+                        camera_names=
+                            camera_names,
+                    )
+                )
+
+                if mosaic_bgr is not None:
+
+                    if mosaic_writer is None:
+
+                        mosaic_path = (
+                            output_dir
+                            /
+                            (
+                                f"{scenario_id}_"
+                                f"{adapter.model_name}_"
+                                f"{args.condition}_all_cameras.mp4"
+                            )
+                        )
+
+                        mosaic_height = int(
+                            mosaic_bgr.shape[0]
+                        )
+
+                        mosaic_width = int(
+                            mosaic_bgr.shape[1]
+                        )
+
+                        mosaic_writer = (
+                            cv2.VideoWriter(
+                                str(
+                                    mosaic_path
+                                ),
+                                cv2.VideoWriter_fourcc(
+                                    *"mp4v"
+                                ),
+                                float(
+                                    fps
+                                ),
+                                (
+                                    mosaic_width,
+                                    mosaic_height,
+                                ),
+                            )
+                        )
+
+                        if not mosaic_writer.isOpened():
+
+                            raise RuntimeError(
+                                "Could not open "
+                                "mosaic video writer: "
+                                f"{mosaic_path}"
+                            )
+
+                        print(
+                            "[MOSAIC VIDEO]",
+                            mosaic_path,
+                        )
+
+                        print(
+                            "[MOSAIC SIZE]",
+                            f"{mosaic_width}x"
+                            f"{mosaic_height}",
+                        )
+
+                    mosaic_writer.write(
+                        mosaic_bgr
+                    )
             # ------------------------------------------------
             # Ego speed
             # ------------------------------------------------
@@ -1786,6 +2592,164 @@ def main():
                 deviation_counter = 0
 
             # ------------------------------------------------
+            # Deterministic environment state for this frame
+            # ------------------------------------------------
+
+            traffic_light_state = ""
+
+            if traffic_light_executor is not None:
+
+                traffic_light_state = (
+                    traffic_light_executor
+                    .primary_state_name(
+                        t_s
+                    )
+                )
+
+            # ------------------------------------------------
+            # Select actor for safety metrics
+            # ------------------------------------------------
+
+            metric_actor = None
+
+            if args.metric_actor_id is not None:
+
+                requested_actor_id = str(
+                    args.metric_actor_id
+                )
+
+                for candidate in active_actors:
+
+                    if (
+                        str(
+                            candidate.actor_id
+                        )
+                        ==
+                        requested_actor_id
+                    ):
+
+                        metric_actor = candidate
+                        break
+
+            elif len(active_actors) == 1:
+
+                metric_actor = (
+                    active_actors[0]
+                )
+
+            # ------------------------------------------------
+            # Turn-aware route pair metrics
+            # ------------------------------------------------
+
+            pair_metrics = None
+            pair_virtual_collision = False
+
+            if (
+                route_projector is not None
+                and
+                metric_actor is not None
+                and
+                metric_actor.physical_dimensions
+                is not None
+            ):
+
+                actor_dims = (
+                    metric_actor
+                    .physical_dimensions
+                )
+
+                pair_metrics = (
+                    compute_route_pair_metrics(
+                        projector=
+                            route_projector,
+
+                        ego_x=
+                            float(
+                                ego_loc.x
+                            ),
+
+                        ego_y=
+                            float(
+                                ego_loc.y
+                            ),
+
+                        ego_vx=
+                            float(
+                                velocity.x
+                            ),
+
+                        ego_vy=
+                            float(
+                                velocity.y
+                            ),
+
+                        actor_x=
+                            float(
+                                metric_actor
+                                .world_x_m
+                            ),
+
+                        actor_y=
+                            float(
+                                metric_actor
+                                .world_y_m
+                            ),
+
+                        ego_length_m=
+                            ego_length_m,
+
+                        actor_length_m=
+                            float(
+                                actor_dims
+                                .length_m
+                            ),
+
+                        actor_route_speed_mps=
+                            float(
+                                metric_actor
+                                .speed_mps
+                            ),
+
+                        previous_ego_segment_idx=
+                            route_metric_ego_segment,
+
+                        previous_actor_segment_idx=
+                            route_metric_actor_segment,
+                    )
+                )
+
+                route_metric_ego_segment = (
+                    pair_metrics
+                    .ego
+                    .segment_idx
+                )
+
+                route_metric_actor_segment = (
+                    pair_metrics
+                    .actor
+                    .segment_idx
+                )
+
+                pair_virtual_collision = (
+                    route_virtual_collision(
+                        metrics=
+                            pair_metrics,
+                        ego_length_m=ego_length_m,
+
+                        actor_length_m=float(
+                            actor_dims.length_m
+                        ),
+                        ego_width_m=
+                            ego_width_m,
+
+                        actor_width_m=
+                            float(
+                                actor_dims
+                                .width_m
+                            ),
+                    )
+                )
+            # ------------------------------------------------
             # Generic log row
             # ------------------------------------------------
 
@@ -1802,7 +2766,7 @@ def main():
                     adapter.model_name,
 
                 "condition":
-                    "he",
+                    args.condition,
 
                 "scenario_frame":
                     int(
@@ -1817,6 +2781,18 @@ def main():
                 "t_s":
                     float(
                         t_s
+                    ),
+                "traffic_light_state":
+                    traffic_light_state,
+
+                "event_start_s":
+                    (
+                        ""
+                        if args.event_start_s
+                        is None
+                        else float(
+                            args.event_start_s
+                        )
                     ),
 
                 "ego_x":
@@ -1909,6 +2885,148 @@ def main():
                     len(
                         active_actors
                     ),
+                "metric_actor_id":
+                    (
+                        ""
+                        if metric_actor is None
+                        else str(
+                            metric_actor.actor_id
+                        )
+                    ),
+
+                "metric_actor_speed_mps":
+                    (
+                        ""
+                        if metric_actor is None
+                        else float(
+                            metric_actor.speed_mps
+                        )
+                    ),
+
+                "ego_route_progress_m":
+                    (
+                        ""
+                        if pair_metrics is None
+                        else float(
+                            pair_metrics
+                            .ego
+                            .s_m
+                        )
+                    ),
+
+                "actor_route_progress_m":
+                    (
+                        ""
+                        if pair_metrics is None
+                        else float(
+                            pair_metrics
+                            .actor
+                            .s_m
+                        )
+                    ),
+
+                "route_center_gap_m":
+                    (
+                        ""
+                        if pair_metrics is None
+                        else float(
+                            pair_metrics
+                            .center_gap_m
+                        )
+                    ),
+
+                "route_bumper_gap_m":
+                    (
+                        ""
+                        if pair_metrics is None
+                        else float(
+                            pair_metrics
+                            .bumper_gap_m
+                        )
+                    ),
+
+                "ego_route_lateral_m":
+                    (
+                        ""
+                        if pair_metrics is None
+                        else float(
+                            pair_metrics
+                            .ego
+                            .lateral_m
+                        )
+                    ),
+
+                "actor_route_lateral_m":
+                    (
+                        ""
+                        if pair_metrics is None
+                        else float(
+                            pair_metrics
+                            .actor
+                            .lateral_m
+                        )
+                    ),
+
+                "route_lateral_separation_m":
+                    (
+                        ""
+                        if pair_metrics is None
+                        else float(
+                            pair_metrics
+                            .lateral_separation_m
+                        )
+                    ),
+
+                "ego_route_speed_mps":
+                    (
+                        ""
+                        if pair_metrics is None
+                        else float(
+                            pair_metrics
+                            .ego_route_speed_mps
+                        )
+                    ),
+
+                "actor_route_speed_mps":
+                    (
+                        ""
+                        if pair_metrics is None
+                        else float(
+                            pair_metrics
+                            .actor_route_speed_mps
+                        )
+                    ),
+
+                "route_closing_speed_mps":
+                    (
+                        ""
+                        if pair_metrics is None
+                        else float(
+                            pair_metrics
+                            .closing_speed_mps
+                        )
+                    ),
+
+                "route_ttc_s":
+                    (
+                        ""
+                        if pair_metrics is None
+                        else float(
+                            pair_metrics
+                            .ttc_s
+                        )
+                    ),
+
+                "route_virtual_collision":
+                    (
+                        ""
+                        if pair_metrics is None
+                        else int(
+                            bool(
+                                pair_virtual_collision
+                            )
+                        )
+                    ),
             }
 
             for camera_name in (
@@ -1950,6 +3068,116 @@ def main():
                         depth
                     )
                 )
+                rendered = rendered_rows(
+                    composite
+                )
+
+                nearest_actor = None
+
+                if rendered:
+                    nearest_actor = min(
+                        rendered,
+                        key=lambda actor_result:
+                            float(
+                                actor_result.distance_forward_m
+                            ),
+                    )
+
+                if nearest_actor is not None:
+
+                    he_meta = (
+                        nearest_actor.he_metadata
+                        or
+                        {}
+                    )
+
+                else:
+
+                    he_meta = {}
+
+                row[
+                    f"{camera_name}_selected_angle"
+                ] = he_meta.get(
+                    "selected_angle",
+                    "",
+                )
+
+                row[
+                    f"{camera_name}_selected_distance_m"
+                ] = he_meta.get(
+                    "selected_distance_m",
+                    "",
+                )
+
+                row[
+                    f"{camera_name}_selected_elevation_deg"
+                ] = he_meta.get(
+                    "selected_elevation_deg",
+                    "",
+                )
+
+                row[
+                    f"{camera_name}_anchor_mode"
+                ] = he_meta.get(
+                    "anchor_mode",
+                    "",
+                )
+
+                row[
+                    f"{camera_name}_source_anchor_x_px"
+                ] = he_meta.get(
+                    "source_anchor_x_px",
+                    "",
+                )
+
+                row[
+                    f"{camera_name}_source_anchor_y_px"
+                ] = he_meta.get(
+                    "source_anchor_y_px",
+                    "",
+                )
+
+                row[
+                    f"{camera_name}_target_anchor_x_px"
+                ] = he_meta.get(
+                    "target_anchor_x_px",
+                    "",
+                )
+
+                row[
+                    f"{camera_name}_target_anchor_y_px"
+                ] = he_meta.get(
+                    "target_anchor_y_px",
+                    "",
+                )
+
+                row[
+                    f"{camera_name}_legacy_source_anchor_x_px"
+                ] = he_meta.get(
+                    "legacy_source_anchor_x_px",
+                    "",
+                )
+
+                row[
+                    f"{camera_name}_legacy_source_anchor_y_px"
+                ] = he_meta.get(
+                    "legacy_source_anchor_y_px",
+                    "",
+                )
+
+                row[
+                    f"{camera_name}_paste_x1"
+                ] = he_meta.get(
+                    "paste_x1",
+                    "",
+                )
+
+                row[
+                    f"{camera_name}_paste_y1"
+                ] = he_meta.get(
+                    "paste_y1",
+                    "",
+                )                
 
             writer.writerow(
                 row
@@ -2069,6 +3297,42 @@ def main():
                 end_frame
             ):
 
+                if (
+                    traffic_light_executor
+                    is not None
+                ):
+
+                    next_t_s = (
+                        float(
+                            scenario_frame
+                            + 1
+                        )
+                        /
+                        float(
+                            fps
+                        )
+                    )
+
+                    traffic_light_executor.apply(
+                        next_t_s
+                    )
+                if args.condition == "carla":
+
+                    next_scenario_frame = (
+                        scenario_frame
+                        + 1
+                    )
+
+                    sync_carla_scenario_actors(
+                        world=world,
+                        carla_map=carla_map,
+                        actor_by_id=
+                            scenario_carla_actors,
+                        active_states=
+                            runtime.active_actors(
+                                next_scenario_frame
+                            ),
+                    )
                 current_frame = (
                     world.tick()
                 )
@@ -2118,7 +3382,36 @@ def main():
         print("=" * 78)
 
     finally:
+        if video_writer is not None:
 
+            video_writer.release()
+        if mosaic_writer is not None:
+
+            mosaic_writer.release()
+        for actor in (
+            scenario_carla_actors.values()
+        ):
+            try:
+                actor.destroy()
+            except Exception:
+                pass
+        if (
+            traffic_light_executor
+            is not None
+
+        ):
+
+            try:
+
+                traffic_light_executor.restore()
+
+            except Exception as exc:
+
+                print(
+                    "[cleanup warning] "
+                    "traffic-light restore:",
+                    exc,
+                )
         # ====================================================
         # Cleanup
         # ====================================================

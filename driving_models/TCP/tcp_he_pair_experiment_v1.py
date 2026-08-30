@@ -51,14 +51,7 @@ import cv2
 import numpy as np
 import torch
 import carla
-from route_progress_metrics_v1 import (
-    RouteProjector,
-    compute_route_pair_metrics,
-    route_virtual_collision,
-)
-from traffic_light_schedule_v1 import (
-    TrafficLightScheduleExecutor,
-)
+
 # ============================================================
 # Existing validated TCP integration
 # ============================================================
@@ -110,6 +103,16 @@ if str(COMMON_DIR) not in sys.path:
         0,
         str(COMMON_DIR),
     )
+
+from route_progress_metrics_v1 import (
+    RouteProjector,
+    compute_route_pair_metrics,
+    route_virtual_collision,
+)
+
+from traffic_light_schedule_v1 import (
+    TrafficLightScheduleExecutor,
+)
 
 from carla_ego_initialization import (
     canonicalize_ego_start,
@@ -317,6 +320,168 @@ def make_instance_camera_from_parent_rgb(
     )
 
     return camera
+
+
+def make_depth_camera_from_parent_rgb(
+    world,
+    ego,
+    parent_rgb_camera,
+):
+    """
+    Spawn a CARLA metric-depth camera exactly aligned with
+    TCP's native RGB camera.
+
+    TCP native camera:
+        900x256
+        FOV 100
+        x=-1.5, y=0.0, z=2.0
+        pitch=0, yaw=0, roll=0
+
+    The depth camera is used ONLY for HE/world occlusion.
+    It is not supplied to TCP and does not change the model.
+    """
+
+    camera_bp = (
+        world
+        .get_blueprint_library()
+        .find(
+            "sensor.camera.depth"
+        )
+    )
+
+    camera_bp.set_attribute(
+        "image_size_x",
+        parent_rgb_camera.attributes.get(
+            "image_size_x",
+            "900",
+        ),
+    )
+
+    camera_bp.set_attribute(
+        "image_size_y",
+        parent_rgb_camera.attributes.get(
+            "image_size_y",
+            "256",
+        ),
+    )
+
+    camera_bp.set_attribute(
+        "fov",
+        parent_rgb_camera.attributes.get(
+            "fov",
+            "100",
+        ),
+    )
+
+    # IMPORTANT:
+    # Same RELATIVE transform as TCP RGB camera.
+    camera_tf = carla.Transform(
+        carla.Location(
+            x=-1.5,
+            y=0.0,
+            z=2.0,
+        ),
+        carla.Rotation(
+            pitch=0.0,
+            yaw=0.0,
+            roll=0.0,
+        ),
+    )
+
+    camera = world.spawn_actor(
+        camera_bp,
+        camera_tf,
+        attach_to=ego,
+    )
+
+    return camera
+
+
+def carla_depth_image_to_m(
+    depth_image,
+):
+    """
+    Decode CARLA sensor.camera.depth raw BGRA image into
+    metric forward-ray distance in metres.
+
+    CARLA depth encoding:
+
+        normalized =
+            (R + 256*G + 256^2*B)
+            / (256^3 - 1)
+
+        depth_m =
+            1000 * normalized
+
+    raw_data is BGRA, therefore:
+        B = channel 0
+        G = channel 1
+        R = channel 2
+    """
+
+    array = np.frombuffer(
+        depth_image.raw_data,
+        dtype=np.uint8,
+    )
+
+    array = array.reshape(
+        (
+            depth_image.height,
+            depth_image.width,
+            4,
+        )
+    )
+
+    blue = (
+        array[
+            :,
+            :,
+            0,
+        ]
+        .astype(
+            np.float32
+        )
+    )
+
+    green = (
+        array[
+            :,
+            :,
+            1,
+        ]
+        .astype(
+            np.float32
+        )
+    )
+
+    red = (
+        array[
+            :,
+            :,
+            2,
+        ]
+        .astype(
+            np.float32
+        )
+    )
+
+    normalized = (
+        red
+        +
+        green * 256.0
+        +
+        blue * 65536.0
+    ) / 16777215.0
+
+    depth_m = (
+        normalized
+        * 1000.0
+    )
+
+    return depth_m.astype(
+        np.float32,
+        copy=False,
+    )
 
 
 def mask_geometry_from_binary(mask_u8):
@@ -2191,6 +2356,27 @@ def main():
             "in native-camera pixels. Negative moves HE upward."
         ),
     )
+
+    parser.add_argument(
+        "--he-scene-depth-occlusion",
+        action="store_true",
+        help=(
+            "Enable CARLA/world-to-HE depth occlusion using a "
+            "depth camera exactly aligned with TCP's native RGB camera."
+        ),
+    )
+
+    parser.add_argument(
+        "--he-scene-occlusion-margin-m",
+        type=float,
+        default=0.25,
+        help=(
+            "Depth safety margin in metres for CARLA/world-to-HE "
+            "occlusion. Scene geometry must be this much closer "
+            "than the HE actor before masking HE pixels."
+        ),
+    )
+
     parser.add_argument(
         "--dump-native-equivalence-v1",
         action="store_true",
@@ -2390,9 +2576,19 @@ def main():
         args.actor_id,
     )
 
-    validate_tcp_camera(
-        scenario
-    )
+    # --------------------------------------------------------
+    # Scenario camera metadata is intentionally ignored.
+    #
+    # ResolvedScenarioV2 describes model-independent physical
+    # truth. TCP always uses its own validated native camera:
+    #
+    #     900 x 256
+    #     FOV 100 deg
+    #     x=-1.5, y=0.0, z=2.0
+    #
+    # Therefore the legacy camera block stored in the scenario
+    # must not constrain TCP execution.
+    # --------------------------------------------------------
 
     fps = float(
         scenario["fps"]
@@ -2853,8 +3049,12 @@ def main():
     adversary = None
 
     camera = None
+    depth_camera = None
+
     gnss_sensor = None
     imu_sensor = None
+
+    depth_camera_queue = None
 
     instance_camera = None
     instance_camera_queue = None
@@ -3056,6 +3256,37 @@ def main():
             roll=0.0,
         )
 
+        # ----------------------------------------------------
+        # Optional TCP-native aligned depth camera.
+        #
+        # Used only for CARLA/world -> HE occlusion.
+        # TCP itself still receives RGB only.
+        # ----------------------------------------------------
+
+        if (
+            args.condition == "he"
+            and
+            args.he_scene_depth_occlusion
+        ):
+
+            depth_camera = (
+                make_depth_camera_from_parent_rgb(
+                    world=world,
+                    ego=ego,
+                    parent_rgb_camera=camera,
+                )
+            )
+
+            print(
+                "[HE scene occlusion] "
+                "TCP-aligned depth camera enabled"
+            )
+
+            print(
+                "[HE scene occlusion] margin:",
+                f"{args.he_scene_occlusion_margin_m:.3f} m",
+            )
+
         gnss_sensor = make_gnss(
             world,
             ego,
@@ -3081,6 +3312,16 @@ def main():
         camera.listen(
             camera_queue.put
         )
+
+        if depth_camera is not None:
+
+            depth_camera_queue = (
+                queue.Queue()
+            )
+
+            depth_camera.listen(
+                depth_camera_queue.put
+            )
 
         gnss_sensor.listen(
             gnss_queue.put
@@ -3258,6 +3499,25 @@ def main():
             )
         )
 
+        current_depth_image = None
+        current_depth_m = None
+
+        if depth_camera_queue is not None:
+
+            current_depth_image = (
+                get_named_sensor_frame(
+                    depth_camera_queue,
+                    current_frame,
+                    "Depth camera",
+                )
+            )
+
+            current_depth_m = (
+                carla_depth_image_to_m(
+                    current_depth_image
+                )
+            )
+
         current_gnss = (
             get_named_sensor_frame(
                 gnss_queue,
@@ -3403,6 +3663,12 @@ def main():
 
             "he_rendered",
             "he_depth_m",
+
+            "he_scene_occlusion_enabled",
+            "he_scene_occluded_fraction",
+            "he_scene_occluded_pixels",
+            "he_scene_remaining_pixels",
+
             "he_cx",
             "he_bottom_y",
             "he_box_width",
@@ -3563,6 +3829,35 @@ def main():
         ):
 
             # ------------------------------------------------
+            # Current deterministic environment state
+            #
+            # The environment for this camera frame was applied
+            # before the synchronous CARLA tick. Query the same
+            # scenario timestamp here so CSV/logging records the
+            # state actually associated with this frame.
+            # ------------------------------------------------
+
+            if (
+                traffic_light_executor
+                is not None
+            ):
+
+                traffic_light_state = (
+                    traffic_light_executor
+                    .primary_state_name(
+                        float(
+                            actor_frame[
+                                "t_s"
+                            ]
+                        )
+                    )
+                )
+
+            else:
+
+                traffic_light_state = ""
+
+            # ------------------------------------------------
             # Current physical adversary truth
             # ------------------------------------------------
 
@@ -3639,7 +3934,13 @@ def main():
                             args.he_geometry_mode,
 
                         sprite_geometry=
-                            sprite_geometry,                   
+                            sprite_geometry,
+
+                        scene_depth_m=
+                            current_depth_m,
+
+                        scene_occlusion_margin_m=
+                            args.he_scene_occlusion_margin_m,
                     )
                 )
                 # --------------------------------------------
@@ -3712,7 +4013,13 @@ def main():
                                 args.he_geometry_mode,
 
                             sprite_geometry=
-                                sprite_geometry,                              
+                                sprite_geometry,
+
+                            scene_depth_m=
+                                current_depth_m,
+
+                            scene_occlusion_margin_m=
+                                args.he_scene_occlusion_margin_m,
                         )
                     )
 
@@ -3756,7 +4063,13 @@ def main():
                                 args.he_geometry_mode,
 
                             sprite_geometry=
-                                sprite_geometry,                              
+                                sprite_geometry,
+
+                            scene_depth_m=
+                                current_depth_m,
+
+                            scene_occlusion_margin_m=
+                                args.he_scene_occlusion_margin_m,
                         )
                     )
 
@@ -4109,10 +4422,18 @@ def main():
                         ),
 
                     "gap_m":
-                        float(
-                            metrics[
-                                "bumper_gap_m"
-                            ]
+                        (
+                            float(
+                                route_metrics
+                                .bumper_gap_m
+                            )
+                            if route_metrics is not None
+                            else
+                            float(
+                                metrics[
+                                    "bumper_gap_m"
+                                ]
+                            )
                         ),
                 }
 
@@ -4136,6 +4457,13 @@ def main():
             he_box = (
                 he_meta.get(
                     "box",
+                    {},
+                )
+            )
+
+            he_scene_occlusion = (
+                he_meta.get(
+                    "scene_occlusion",
                     {},
                 )
             )
@@ -4967,6 +5295,34 @@ def main():
                         "",
                     ),
 
+                "he_scene_occlusion_enabled":
+                    int(
+                        bool(
+                            he_scene_occlusion.get(
+                                "enabled",
+                                False,
+                            )
+                        )
+                    ),
+
+                "he_scene_occluded_fraction":
+                    he_scene_occlusion.get(
+                        "occluded_fraction",
+                        "",
+                    ),
+
+                "he_scene_occluded_pixels":
+                    he_scene_occlusion.get(
+                        "occluded_alpha_pixels",
+                        "",
+                    ),
+
+                "he_scene_remaining_pixels":
+                    he_scene_occlusion.get(
+                        "remaining_alpha_pixels",
+                        "",
+                    ),
+
                 "he_cx":
                     he_box.get(
                         "cx",
@@ -5105,7 +5461,9 @@ def main():
                     f"T={tcp['throttle']:.3f} "
                     f"B={tcp['brake']:.3f} "
                     f"| HE="
-                    f"{int(he_meta.get('rendered', False))}"
+                    f"{int(he_meta.get('rendered', False))} "
+                    f"OCC="
+                    f"{100.0 * float(he_scene_occlusion.get('occluded_fraction', 0.0) or 0.0):5.1f}%"
                 )
 
             # ------------------------------------------------
@@ -5185,24 +5543,7 @@ def main():
                 args.condition
                 == "carla"
             ):
-                # --------------------------------------------
-                # Prepare environment for camera frame i+1
-                # --------------------------------------------
 
-                if (
-                    traffic_light_executor
-                    is not None
-                ):
-
-                    traffic_light_executor.apply(
-                        float(
-                            actor_frames[
-                                i + 1
-                            ][
-                                "t_s"
-                            ]
-                        )
-                    )
                 next_actor_tf = (
                     sg_actor_to_world_transform(
                         ego0_tf=
@@ -5237,6 +5578,25 @@ def main():
                     "RGB camera",
                 )
             )
+
+            current_depth_image = None
+            current_depth_m = None
+
+            if depth_camera_queue is not None:
+
+                current_depth_image = (
+                    get_named_sensor_frame(
+                        depth_camera_queue,
+                        current_frame,
+                        "Depth camera",
+                    )
+                )
+
+                current_depth_m = (
+                    carla_depth_image_to_m(
+                        current_depth_image
+                    )
+                )
 
             current_gnss = (
                 get_named_sensor_frame(
@@ -5385,6 +5745,15 @@ def main():
                 pass
 
             camera.destroy()
+
+        if depth_camera is not None:
+            try:
+                depth_camera.stop()
+            except Exception:
+                pass
+
+            depth_camera.destroy()
+
         if instance_camera is not None:
 
             try:
