@@ -610,7 +610,36 @@ def measurement_from_mask(
                 )
             ),
     }
+def bbox_iou_from_measurements(
+    a,
+    b,
+):
+    if a is None or b is None:
+        return float("nan")
 
+    ix1 = max(a["x1"], b["x1"])
+    iy1 = max(a["y1"], b["y1"])
+    ix2 = min(a["x2"], b["x2"])
+    iy2 = min(a["y2"], b["y2"])
+
+    iw = max(0, ix2 - ix1 + 1)
+    ih = max(0, iy2 - iy1 + 1)
+
+    intersection = float(iw * ih)
+
+    area_a = float(
+        a["width_px"] * a["height_px"]
+    )
+    area_b = float(
+        b["width_px"] * b["height_px"]
+    )
+
+    union = area_a + area_b - intersection
+
+    if union <= 0.0:
+        return float("nan")
+
+    return intersection / union
 
 def select_target_vehicle_component(
     raw_vehicle_mask,
@@ -2445,7 +2474,18 @@ def main():
                     "center_x"
                 ]
             )
+            center_y_error = (
+                he_measurement["center_y"]
+                -
+                physical_measurement["center_y"]
+            )
 
+            bbox_iou = (
+                bbox_iou_from_measurements(
+                    physical_measurement,
+                    he_measurement,
+                )
+            )
             bottom_y_error = (
                 he_measurement[
                     "bottom_y"
@@ -2475,7 +2515,23 @@ def main():
             )
 
             row = {
+                "carla_x1_px":
+                    physical_measurement["x1"],
+                "carla_y1_px":
+                    physical_measurement["y1"],
+                "carla_x2_px":
+                    physical_measurement["x2"],
+                "carla_y2_px":
+                    physical_measurement["y2"],
 
+                "he_x1_px":
+                    he_measurement["x1"],
+                "he_y1_px":
+                    he_measurement["y1"],
+                "he_x2_px":
+                    he_measurement["x2"],
+                "he_y2_px":
+                    he_measurement["y2"],
                 "pose_name":
                     pose_name,
 
@@ -2572,8 +2628,14 @@ def main():
                 "center_x_error_px":
                     center_x_error,
 
+                "center_y_error_px":
+                    center_y_error,
+
                 "bottom_y_error_px":
                     bottom_y_error,
+
+                "bbox_iou":
+                    bbox_iou,
 
                 "apparent_depth_from_width_m":
                     apparent_depth_width,
@@ -2778,7 +2840,13 @@ def main():
             ],
             dtype=np.float64,
         )
-
+        bbox_ious = np.array(
+            [
+                row["bbox_iou"]
+                for row in results
+            ],
+            dtype=np.float64,
+        )
         bottom_errors = np.array(
             [
                 r[
@@ -2832,7 +2900,10 @@ def main():
             "Mean apparent-depth error  :",
             f"{np.nanmean(apparent_errors):+.3f} m",
         )
-
+        print(
+            "Mean bbox IoU             :",
+            f"{np.nanmean(bbox_ious):.4f}",
+        )
         print()
         print("-" * 92)
         print("SUMMARY BY VIEW")

@@ -1599,7 +1599,110 @@ def nearest_view_distance(
         "Unsupported distance_selection_mode: "
         f"{mode}"
     )
+def csv_optional_float(
+    row,
+    key,
+    default=None,
+):
+    value = row.get(
+        key,
+        None,
+    )
 
+    if value is None:
+        return default
+
+    text = str(
+        value
+    ).strip()
+
+    if not text:
+        return default
+
+    try:
+        return float(
+            text
+        )
+    except Exception:
+        return default
+
+
+def csv_optional_int(
+    row,
+    key,
+    default=None,
+):
+    value = csv_optional_float(
+        row=row,
+        key=key,
+        default=None,
+    )
+
+    if value is None:
+        return default
+
+    try:
+        return int(
+            round(
+                value
+            )
+        )
+    except Exception:
+        return default
+
+
+def csv_optional_bool(
+    row,
+    key,
+    default=None,
+):
+    value = row.get(
+        key,
+        None,
+    )
+
+    if value is None:
+        return default
+
+    text = str(
+        value
+    ).strip().lower()
+
+    if text in {
+        "1",
+        "true",
+        "yes",
+        "y",
+    }:
+        return True
+
+    if text in {
+        "0",
+        "false",
+        "no",
+        "n",
+    }:
+        return False
+
+    return default
+
+
+def csv_optional_text(
+    row,
+    key,
+    default="",
+):
+    value = row.get(
+        key,
+        None,
+    )
+
+    if value is None:
+        return default
+
+    return str(
+        value
+    )
 def load_view_matrix_sprite_bank(sprite_bank):
     """
     Load one or more generated view_matrix.csv files.
@@ -1640,6 +1743,8 @@ def load_view_matrix_sprite_bank(sprite_bank):
     records = []
     index = {}
 
+    asset_metadata = None
+
     for csv_path_text in csv_paths:
 
         csv_path = Path(
@@ -1653,7 +1758,57 @@ def load_view_matrix_sprite_bank(sprite_bank):
 
         bank_root = csv_path.parent
         rgba_dir = bank_root / "rgba"
+        asset_metadata_path = (
+            bank_root
+            /
+            "asset_metadata.json"
+        )
 
+        if asset_metadata_path.exists():
+
+            with open(
+                asset_metadata_path,
+                "r",
+                encoding="utf-8",
+            ) as metadata_file:
+
+                current_asset_metadata = (
+                    json.load(
+                        metadata_file
+                    )
+                )
+
+            if asset_metadata is None:
+
+                asset_metadata = (
+                    current_asset_metadata
+                )
+
+            else:
+
+                existing_asset_id = (
+                    asset_metadata.get(
+                        "asset_id"
+                    )
+                )
+
+                current_asset_id = (
+                    current_asset_metadata.get(
+                        "asset_id"
+                    )
+                )
+
+                if (
+                    existing_asset_id
+                    !=
+                    current_asset_id
+                ):
+                    raise RuntimeError(
+                        "View-matrix CSV files belong "
+                        "to different assets: "
+                        f"{existing_asset_id!r} vs "
+                        f"{current_asset_id!r}"
+                    )
         local_count = 0
 
         with open(
@@ -1702,46 +1857,421 @@ def load_view_matrix_sprite_bank(sprite_bank):
                     elevation_deg,
                 )
 
+                crop_x1_px = csv_optional_float(
+                    row,
+                    "crop_x1_px",
+                )
+
+                crop_y1_px = csv_optional_float(
+                    row,
+                    "crop_y1_px",
+                )
+
+                projected_ground_anchor_x_px = (
+                    csv_optional_float(
+                        row,
+                        "projected_ground_anchor_x_px",
+                    )
+                )
+
+                projected_ground_anchor_y_px = (
+                    csv_optional_float(
+                        row,
+                        "projected_ground_anchor_y_px",
+                    )
+                )
+
+                # Physical support point expressed in the selected
+                # cropped sprite's own pixel coordinates.
+                #
+                # IMPORTANT:
+                # This is metadata only for now. The current renderer
+                # will continue to use anchor_x / anchor_y until the
+                # physical-anchor rendering change is validated.
+                source_ground_anchor_x = None
+                source_ground_anchor_y = None
+
+                if (
+                    projected_ground_anchor_x_px is not None
+                    and
+                    crop_x1_px is not None
+                ):
+                    source_ground_anchor_x = (
+                        projected_ground_anchor_x_px
+                        -
+                        crop_x1_px
+                    )
+
+                if (
+                    projected_ground_anchor_y_px is not None
+                    and
+                    crop_y1_px is not None
+                ):
+                    source_ground_anchor_y = (
+                        projected_ground_anchor_y_px
+                        -
+                        crop_y1_px
+                    )
+
                 record = {
-                    "angle_deg": angle_deg,
-                    "distance_m": distance_m,
-                    "elevation_deg": elevation_deg,
+                    # =================================================
+                    # View selector
+                    # =================================================
 
-                    "sprite_width_px": int(
-                        float(
-                            row.get(
-                                "sprite_width_px",
-                                0,
-                            )
-                        )
-                    ),
+                    "angle_deg":
+                        angle_deg,
 
-                    "sprite_height_px": int(
-                        float(
-                            row.get(
-                                "sprite_height_px",
-                                0,
-                            )
-                        )
-                    ),
+                    "distance_m":
+                        distance_m,
 
-                    "anchor_x": float(
-                        row.get(
+                    "elevation_deg":
+                        elevation_deg,
+
+                    # =================================================
+                    # Asset identity / schema
+                    # =================================================
+
+                    "schema_version":
+                        csv_optional_text(
+                            row,
+                            "schema_version",
+                        ),
+
+                    "generation_status":
+                        csv_optional_text(
+                            row,
+                            "generation_status",
+                        ),
+
+                    "asset_id":
+                        csv_optional_text(
+                            row,
+                            "asset_id",
+                        ),
+
+                    "asset_class":
+                        csv_optional_text(
+                            row,
+                            "asset_class",
+                        ),
+
+                    "carla_blueprint":
+                        csv_optional_text(
+                            row,
+                            "carla_blueprint",
+                        ),
+
+                    # =================================================
+                    # Source sprite
+                    # =================================================
+
+                    "sprite_width_px":
+                        csv_optional_int(
+                            row,
+                            "sprite_width_px",
+                            0,
+                        ),
+
+                    "sprite_height_px":
+                        csv_optional_int(
+                            row,
+                            "sprite_height_px",
+                            0,
+                        ),
+
+                    # Legacy alpha-bottom anchor.
+                    #
+                    # KEEP for now so rendering behavior is unchanged.
+                    "anchor_x":
+                        csv_optional_float(
+                            row,
                             "anchor_x",
                             0.0,
-                        )
-                    ),
+                        ),
 
-                    "anchor_y": float(
-                        row.get(
+                    "anchor_y":
+                        csv_optional_float(
+                            row,
                             "anchor_y",
                             0.0,
-                        )
-                    ),
+                        ),
 
-                    "rgba_path": str(
-                        local_rgba_path
-                    ),
+                    "rgba_path":
+                        str(
+                            local_rgba_path
+                        ),
+
+                    # =================================================
+                    # Capture camera
+                    # =================================================
+
+                    "target_height_m":
+                        csv_optional_float(
+                            row,
+                            "target_height_m",
+                        ),
+
+                    "image_width_px":
+                        csv_optional_int(
+                            row,
+                            "image_width_px",
+                        ),
+
+                    "image_height_px":
+                        csv_optional_int(
+                            row,
+                            "image_height_px",
+                        ),
+
+                    "fov_deg":
+                        csv_optional_float(
+                            row,
+                            "fov_deg",
+                        ),
+
+                    "camera_fx_px":
+                        csv_optional_float(
+                            row,
+                            "camera_fx_px",
+                        ),
+
+                    "camera_fy_px":
+                        csv_optional_float(
+                            row,
+                            "camera_fy_px",
+                        ),
+
+                    "camera_cx_px":
+                        csv_optional_float(
+                            row,
+                            "camera_cx_px",
+                        ),
+
+                    "camera_cy_px":
+                        csv_optional_float(
+                            row,
+                            "camera_cy_px",
+                        ),
+
+                    # =================================================
+                    # Physical 3-D / camera geometry
+                    # =================================================
+
+                    "bbox_center_distance_m":
+                        csv_optional_float(
+                            row,
+                            "bbox_center_distance_m",
+                        ),
+
+                    "actor_depth_m":
+                        csv_optional_float(
+                            row,
+                            "actor_depth_m",
+                        ),
+
+                    "camera_forward_distance_m":
+                        csv_optional_float(
+                            row,
+                            "camera_forward_distance_m",
+                        ),
+
+                    "camera_right_offset_m":
+                        csv_optional_float(
+                            row,
+                            "camera_right_offset_m",
+                        ),
+
+                    "camera_up_offset_m":
+                        csv_optional_float(
+                            row,
+                            "camera_up_offset_m",
+                        ),
+
+                    "support_depth_m":
+                        csv_optional_float(
+                            row,
+                            "support_depth_m",
+                        ),
+
+                    "nearest_bbox_depth_m":
+                        csv_optional_float(
+                            row,
+                            "nearest_bbox_depth_m",
+                        ),
+
+                    "farthest_bbox_depth_m":
+                        csv_optional_float(
+                            row,
+                            "farthest_bbox_depth_m",
+                        ),
+
+                    # =================================================
+                    # Projected physical bbox
+                    # =================================================
+
+                    "projected_bbox_x1_px":
+                        csv_optional_float(
+                            row,
+                            "projected_bbox_x1_px",
+                        ),
+
+                    "projected_bbox_y1_px":
+                        csv_optional_float(
+                            row,
+                            "projected_bbox_y1_px",
+                        ),
+
+                    "projected_bbox_x2_px":
+                        csv_optional_float(
+                            row,
+                            "projected_bbox_x2_px",
+                        ),
+
+                    "projected_bbox_y2_px":
+                        csv_optional_float(
+                            row,
+                            "projected_bbox_y2_px",
+                        ),
+
+                    "projected_bbox_width_px":
+                        csv_optional_float(
+                            row,
+                            "projected_bbox_width_px",
+                        ),
+
+                    "projected_bbox_height_px":
+                        csv_optional_float(
+                            row,
+                            "projected_bbox_height_px",
+                        ),
+
+                    "projected_bbox_center_x_px":
+                        csv_optional_float(
+                            row,
+                            "projected_bbox_center_x_px",
+                        ),
+
+                    "projected_bbox_bottom_y_px":
+                        csv_optional_float(
+                            row,
+                            "projected_bbox_bottom_y_px",
+                        ),
+
+                    # =================================================
+                    # Physical support / ground anchor
+                    # =================================================
+
+                    "projected_ground_anchor_x_px":
+                        projected_ground_anchor_x_px,
+
+                    "projected_ground_anchor_y_px":
+                        projected_ground_anchor_y_px,
+
+                    "source_ground_anchor_x":
+                        source_ground_anchor_x,
+
+                    "source_ground_anchor_y":
+                        source_ground_anchor_y,
+
+                    # =================================================
+                    # Crop geometry
+                    # =================================================
+
+                    "crop_x1_px":
+                        crop_x1_px,
+
+                    "crop_y1_px":
+                        crop_y1_px,
+
+                    "crop_x2_px":
+                        csv_optional_float(
+                            row,
+                            "crop_x2_px",
+                        ),
+
+                    "crop_y2_px":
+                        csv_optional_float(
+                            row,
+                            "crop_y2_px",
+                        ),
+
+                    "crop_width_px":
+                        csv_optional_float(
+                            row,
+                            "crop_width_px",
+                        ),
+
+                    "crop_height_px":
+                        csv_optional_float(
+                            row,
+                            "crop_height_px",
+                        ),
+
+                    # =================================================
+                    # Visible alpha geometry
+                    # =================================================
+
+                    "alpha_area_px":
+                        csv_optional_int(
+                            row,
+                            "alpha_area_px",
+                        ),
+
+                    "visible_width_px":
+                        csv_optional_float(
+                            row,
+                            "visible_width_px",
+                        ),
+
+                    "visible_height_px":
+                        csv_optional_float(
+                            row,
+                            "visible_height_px",
+                        ),
+
+                    "connected_component_count":
+                        csv_optional_int(
+                            row,
+                            "connected_component_count",
+                        ),
+
+                    # =================================================
+                    # HE physical size references
+                    # =================================================
+
+                    "he_reference_projected_width_px":
+                        csv_optional_float(
+                            row,
+                            "he_reference_projected_width_px",
+                        ),
+
+                    "he_reference_projected_height_px":
+                        csv_optional_float(
+                            row,
+                            "he_reference_projected_height_px",
+                        ),
+
+                    # =================================================
+                    # QA
+                    # =================================================
+
+                    "qa_pass":
+                        csv_optional_bool(
+                            row,
+                            "qa_pass",
+                        ),
+
+                    "qa_flags":
+                        csv_optional_text(
+                            row,
+                            "qa_flags",
+                        ),
+
+                    "qa_warnings":
+                        csv_optional_text(
+                            row,
+                            "qa_warnings",
+                        ),
                 }
 
                 if key in index:
@@ -1827,6 +2357,27 @@ def load_view_matrix_sprite_bank(sprite_bank):
         "angles": angles,
         "distances": distances,
         "elevations": elevations,
+
+        "asset_metadata":
+            asset_metadata,
+
+        "physical_bbox":
+            (
+                asset_metadata.get(
+                    "physical_bbox"
+                )
+                if asset_metadata is not None
+                else None
+            ),
+
+        "capture_metadata":
+            (
+                asset_metadata.get(
+                    "capture"
+                )
+                if asset_metadata is not None
+                else None
+            ),
     }
 
 
@@ -1978,10 +2529,29 @@ def select_view_matrix_sprite(
         elevation
     """
 
+    asset_metadata = (
+        view_matrix.get(
+            "asset_metadata"
+        )
+        or
+        {}
+    )
+
+    capture_metadata = (
+        asset_metadata.get(
+            "capture"
+        )
+        or
+        {}
+    )
+
     target_height_m = float(
-        sprite_bank.get(
-            "target_height_m",
-            0.75,
+        capture_metadata.get(
+            "resolved_target_height_m",
+            sprite_bank.get(
+                "target_height_m",
+                0.75,
+            ),
         )
     )
 
@@ -2089,7 +2659,10 @@ def select_view_matrix_sprite(
             float(
                 query["distance_m"]
             ),
-
+        "query_target_height_m":
+            float(
+                target_height_m
+            ),
         "selected_distance_m":
             float(
                 selected_distance
@@ -2141,7 +2714,157 @@ def select_view_matrix_sprite(
             int(record["sprite_width_px"]),
 
         "source_sprite_height_px":
-            int(record["sprite_height_px"]),
+            int(
+                record[
+                    "sprite_height_px"
+                ]
+            ),
+
+        # =====================================================
+        # Rich production metadata
+        #
+        # Propagated only. Rendering still uses anchor_x/y.
+        # =====================================================
+
+        "source_target_height_m":
+            record.get(
+                "target_height_m"
+            ),
+
+        "source_ground_anchor_x":
+            record.get(
+                "source_ground_anchor_x"
+            ),
+
+        "source_ground_anchor_y":
+            record.get(
+                "source_ground_anchor_y"
+            ),
+
+        "projected_ground_anchor_x_px":
+            record.get(
+                "projected_ground_anchor_x_px"
+            ),
+
+        "projected_ground_anchor_y_px":
+            record.get(
+                "projected_ground_anchor_y_px"
+            ),
+
+        "crop_x1_px":
+            record.get(
+                "crop_x1_px"
+            ),
+
+        "crop_y1_px":
+            record.get(
+                "crop_y1_px"
+            ),
+
+        "crop_x2_px":
+            record.get(
+                "crop_x2_px"
+            ),
+
+        "crop_y2_px":
+            record.get(
+                "crop_y2_px"
+            ),
+
+        "bbox_center_distance_m":
+            record.get(
+                "bbox_center_distance_m"
+            ),
+
+        "camera_forward_distance_m":
+            record.get(
+                "camera_forward_distance_m"
+            ),
+
+        "support_depth_m":
+            record.get(
+                "support_depth_m"
+            ),
+
+        "nearest_bbox_depth_m":
+            record.get(
+                "nearest_bbox_depth_m"
+            ),
+
+        "farthest_bbox_depth_m":
+            record.get(
+                "farthest_bbox_depth_m"
+            ),
+
+        "projected_bbox_center_x_px":
+            record.get(
+                "projected_bbox_center_x_px"
+            ),
+
+        "projected_bbox_bottom_y_px":
+            record.get(
+                "projected_bbox_bottom_y_px"
+            ),
+
+        "projected_bbox_width_px":
+            record.get(
+                "projected_bbox_width_px"
+            ),
+
+        "projected_bbox_height_px":
+            record.get(
+                "projected_bbox_height_px"
+            ),
+
+        "he_reference_projected_width_px":
+            record.get(
+                "he_reference_projected_width_px"
+            ),
+
+        "he_reference_projected_height_px":
+            record.get(
+                "he_reference_projected_height_px"
+            ),
+
+        "visible_width_px":
+            record.get(
+                "visible_width_px"
+            ),
+
+        "visible_height_px":
+            record.get(
+                "visible_height_px"
+            ),
+
+        "asset_id":
+            record.get(
+                "asset_id"
+            ),
+
+        "asset_class":
+            record.get(
+                "asset_class"
+            ),
+
+        "carla_blueprint":
+            record.get(
+                "carla_blueprint"
+            ),
+
+        "qa_pass":
+            record.get(
+                "qa_pass"
+            ),
+
+        "qa_flags":
+            record.get(
+                "qa_flags"
+            ),
+
+        "qa_warnings":
+            record.get(
+                "qa_warnings"
+            ),
     }
 
 

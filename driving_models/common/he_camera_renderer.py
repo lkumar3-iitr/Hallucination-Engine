@@ -101,6 +101,10 @@ from run_he_temporal_compositor_v1 import (
 )
 
 
+from he_projection_geometry_v1 import (
+    project_virtual_actor_center_depth_billboard,
+)
+
 # ============================================================
 # Angle
 # ============================================================
@@ -301,7 +305,229 @@ def project_world_point(
             ),
     }
 
+def project_asset_physical_support_anchor(
+    actor_tf,
+    camera_tf,
+    physical_bbox,
+    width,
+    height,
+    fov,
+):
+    """
+    Project the SAME physical bbox support-center definition used by
+    the production asset generator.
 
+    Production definition:
+        1. construct all 8 physical CARLA bbox vertices,
+        2. transform them into world coordinates,
+        3. select the four vertices with the lowest world Z,
+        4. average those four vertices,
+        5. project that support center into the camera.
+
+    This makes source and runtime anchor semantics identical.
+    """
+
+    if not physical_bbox:
+        return None
+
+    required = [
+        "extent_x_m",
+        "extent_y_m",
+        "extent_z_m",
+        "local_center_x_m",
+        "local_center_y_m",
+        "local_center_z_m",
+    ]
+
+    for key in required:
+        if physical_bbox.get(key) is None:
+            return None
+
+    extent_x = float(
+        physical_bbox["extent_x_m"]
+    )
+
+    extent_y = float(
+        physical_bbox["extent_y_m"]
+    )
+
+    extent_z = float(
+        physical_bbox["extent_z_m"]
+    )
+
+    bbox_tf = carla.Transform(
+        carla.Location(
+            x=float(
+                physical_bbox[
+                    "local_center_x_m"
+                ]
+            ),
+            y=float(
+                physical_bbox[
+                    "local_center_y_m"
+                ]
+            ),
+            z=float(
+                physical_bbox[
+                    "local_center_z_m"
+                ]
+            ),
+        ),
+        carla.Rotation(
+            pitch=float(
+                physical_bbox.get(
+                    "local_rotation_pitch_deg",
+                    0.0,
+                )
+            ),
+            yaw=float(
+                physical_bbox.get(
+                    "local_rotation_yaw_deg",
+                    0.0,
+                )
+            ),
+            roll=float(
+                physical_bbox.get(
+                    "local_rotation_roll_deg",
+                    0.0,
+                )
+            ),
+        ),
+    )
+
+    actor_to_world = np.asarray(
+        actor_tf.get_matrix(),
+        dtype=np.float64,
+    )
+
+    bbox_to_actor = np.asarray(
+        bbox_tf.get_matrix(),
+        dtype=np.float64,
+    )
+
+    bbox_to_world = (
+        actor_to_world
+        @
+        bbox_to_actor
+    )
+
+    world_vertices = []
+
+    for local_x in (
+        -extent_x,
+        +extent_x,
+    ):
+        for local_y in (
+            -extent_y,
+            +extent_y,
+        ):
+            for local_z in (
+                -extent_z,
+                +extent_z,
+            ):
+
+                local_h = np.array(
+                    [
+                        float(local_x),
+                        float(local_y),
+                        float(local_z),
+                        1.0,
+                    ],
+                    dtype=np.float64,
+                )
+
+                world_h = (
+                    bbox_to_world
+                    @
+                    local_h
+                )
+
+                world_vertices.append(
+                    np.asarray(
+                        world_h[:3],
+                        dtype=np.float64,
+                    )
+                )
+
+    vertices_xyz = np.asarray(
+        world_vertices,
+        dtype=np.float64,
+    )
+
+    bottom_indices = np.argsort(
+        vertices_xyz[:, 2]
+    )[:4]
+
+    support_xyz = np.mean(
+        vertices_xyz[
+            bottom_indices
+        ],
+        axis=0,
+    )
+
+    support_world = carla.Location(
+        x=float(
+            support_xyz[0]
+        ),
+        y=float(
+            support_xyz[1]
+        ),
+        z=float(
+            support_xyz[2]
+        ),
+    )
+
+    k = make_camera_intrinsic(
+        width=width,
+        height=height,
+        fov_deg=fov,
+    )
+
+    world_to_camera = np.asarray(
+        camera_tf.get_inverse_matrix(),
+        dtype=np.float64,
+    )
+
+    projected = project_world_point(
+        point=support_world,
+        world_to_camera=world_to_camera,
+        k=k,
+    )
+
+    if projected is None:
+        return None
+
+    return {
+        "u":
+            float(
+                projected["u"]
+            ),
+
+        "v":
+            float(
+                projected["v"]
+            ),
+
+        "depth_m":
+            float(
+                projected["depth"]
+            ),
+
+        "world_x_m":
+            float(
+                support_xyz[0]
+            ),
+
+        "world_y_m":
+            float(
+                support_xyz[1]
+            ),
+
+        "world_z_m":
+            float(
+                support_xyz[2]
+            ),
+    }
 # ============================================================
 # Actor projection
 # ============================================================
@@ -1887,7 +2113,10 @@ def render_he_actor_view_matrix(
     fov,
     bottom_y_offset_px=0.0,
     geometry_mode="proxy",
+    projection_mode="oriented_2p5d_support",
     sprite_geometry=None,
+    close_width_blend_near_m=5.10,
+    close_width_blend_far_m=5.90,
     scene_depth_m=None,
     scene_occlusion_margin_m=0.25,
 ):
@@ -1906,24 +2135,57 @@ def render_he_actor_view_matrix(
     if geometry_mode not in {
         "proxy",
         "sprite_native",
+        "sprite_native_width",
+        "close_width_blend",
     }:
         raise ValueError(
-            "geometry_mode must be either "
-            "'proxy' or 'sprite_native', got "
+            "geometry_mode must be one of "
+            "'proxy', 'sprite_native', "
+            "'sprite_native_width', or "
+            "'close_width_blend', got "
             f"{geometry_mode!r}"
         )
+    projection_mode = (
+        str(projection_mode)
+        .strip()
+        .lower()
+    )
+
+    if projection_mode not in {
+        "oriented_2p5d_support",
+        "center_depth_billboard",
+    }:
+        raise ValueError(
+            "projection_mode must be either "
+            "'oriented_2p5d_support' or "
+            "'center_depth_billboard', got "
+            f"{projection_mode!r}"
+        )
+
     # --------------------------------------------------------
     # Native-camera metric projection
     # --------------------------------------------------------
 
-    box = project_virtual_actor(
-        actor_tf=actor_tf,
-        camera_tf=camera_tf,
-        dimensions=dimensions,
-        width=width,
-        height=height,
-        fov=fov,
-    )
+    if projection_mode == "center_depth_billboard":
+        box = (
+            project_virtual_actor_center_depth_billboard(
+                actor_tf=actor_tf,
+                camera_tf=camera_tf,
+                dimensions=dimensions,
+                width=width,
+                height=height,
+                fov=fov,
+            )
+        )
+    else:
+        box = project_virtual_actor(
+            actor_tf=actor_tf,
+            camera_tf=camera_tf,
+            dimensions=dimensions,
+            width=width,
+            height=height,
+            fov=fov,
+        )
 
     meta = {
         "rendered":
@@ -1959,6 +2221,9 @@ def render_he_actor_view_matrix(
         "geometry_mode":
             geometry_mode,
 
+        "projection_mode":
+            projection_mode,
+
         "geometry_version":
             None,
 
@@ -1972,6 +2237,36 @@ def render_he_actor_view_matrix(
             None,
 
         "sprite_native_geometry":
+            None,
+
+        "sprite_geometry_query_distance_m":
+            None,
+
+        "sprite_geometry_depth_coordinate":
+            None,
+
+        "close_width_blend_near_m":
+            None,
+
+        "close_width_blend_far_m":
+            None,
+
+        "close_width_blend_weight_native":
+            None,
+
+        "close_width_proxy_width_px":
+            None,
+
+        "close_width_native_width_px":
+            None,
+
+        "close_width_final_width_px":
+            None,
+
+        "target_visible_bbox_unclipped":
+            None,
+
+        "rendered_alpha_bbox":
             None,
     
     }
@@ -2078,7 +2373,178 @@ def render_he_actor_view_matrix(
             frame,
             meta,
         )
+    # ========================================================
+    # Physical source -> physical target anchor
+    #
+    # Source:
+    #     physical bbox support center stored by asset generator
+    #
+    # Target:
+    #     same physical support center reconstructed from the
+    #     virtual actor pose and projected into this native camera
+    #
+    # Width/height remain unchanged in this patch.
+    # ========================================================
 
+    physical_bbox = (
+        view_matrix.get(
+            "physical_bbox"
+        )
+    )
+
+    target_support_anchor = (
+        project_asset_physical_support_anchor(
+            actor_tf=actor_tf,
+            camera_tf=camera_tf,
+            physical_bbox=physical_bbox,
+            width=width,
+            height=height,
+            fov=fov,
+        )
+    )
+
+    source_ground_anchor_x = (
+        sprite_info.get(
+            "source_ground_anchor_x"
+        )
+    )
+
+    source_ground_anchor_y = (
+        sprite_info.get(
+            "source_ground_anchor_y"
+        )
+    )
+
+    use_physical_anchor = (
+        projection_mode
+        !=
+        "center_depth_billboard"
+        and
+        target_support_anchor
+        is not None
+        and
+        source_ground_anchor_x
+        is not None
+        and
+        source_ground_anchor_y
+        is not None
+    )
+
+    if use_physical_anchor:
+
+        render_target_x = float(
+            target_support_anchor[
+                "u"
+            ]
+        )
+
+        render_target_y = (
+            float(
+                target_support_anchor[
+                    "v"
+                ]
+            )
+            +
+            float(
+                bottom_y_offset_px
+            )
+        )
+
+        render_source_anchor_x = float(
+            source_ground_anchor_x
+        )
+
+        render_source_anchor_y = float(
+            source_ground_anchor_y
+        )
+
+        anchor_mode = (
+            "physical_bbox_support_center"
+        )
+
+    else:
+
+        # Backward-compatible fallback for old banks.
+        render_target_x = float(
+            box["cx"]
+        )
+
+        render_target_y = float(
+            render_bottom_y
+        )
+
+        render_source_anchor_x = float(
+            sprite_info["anchor_x"]
+        )
+
+        render_source_anchor_y = float(
+            sprite_info["anchor_y"]
+        )
+
+        anchor_mode = (
+            "center_depth_alpha_bottom"
+            if projection_mode == "center_depth_billboard"
+            else "legacy_alpha_bottom"
+        )
+    if (
+        float(box["depth_m"]) < 20.0
+        and
+        abs(float(box["camera_right_m"])) > 1.0
+    ):
+        print(
+            "[HE-ANCHOR]",
+            "mode=", anchor_mode,
+            "depth=", round(float(box["depth_m"]), 3),
+            "right=", round(float(box["camera_right_m"]), 3),
+            "bearing=", round(
+                math.degrees(
+                    math.atan2(
+                        float(box["camera_right_m"]),
+                        float(box["depth_m"]),
+                    )
+                ),
+                3,
+            ),
+            "rel_yaw=", round(
+                float(
+                    box[
+                        "actor_relative_yaw_deg"
+                    ]
+                ),
+                3,
+            ),
+            "angle=", round(
+                float(sprite_info["relative_angle_deg"]),
+                3,
+            ),
+            "selected=", int(
+                sprite_info["selected_angle"]
+            ),
+            "box_cx=", round(
+                float(box["cx"]),
+                3,
+            ),
+            "actor_ref_cx=", round(
+                float(box["actor_reference_cx_px"]),
+                3,
+            ),
+            "target_x=", round(
+                float(render_target_x),
+                3,
+            ),
+            "source_anchor_x=", round(
+                float(render_source_anchor_x),
+                3,
+            ),
+            "physical_bbox=",
+            physical_bbox is not None,
+            "source_ground_anchor=",
+            (
+                source_ground_anchor_x is not None
+                and
+                source_ground_anchor_y is not None
+            ),
+        )
     # --------------------------------------------------------
     # Final visible geometry.
     #
@@ -2086,9 +2552,22 @@ def render_he_actor_view_matrix(
     #     Preserve the existing dimensions-based projection.
     #
     # sprite_native:
-    #     Keep actor/camera projection for position, visibility
-    #     and depth, but obtain visible width/height directly
-    #     from the sprite bank's continuous geometry field.
+    #     Diagnostic full sprite-native geometry. Width and height
+    #     both come from the sprite geometry field, using the legacy
+    #     forward-depth coordinate retained for A/B comparison.
+    #
+    # sprite_native_width:
+    #     Diagnostic width-only mode. Keep center-depth billboard
+    #     placement and HEIGHT unchanged, but obtain WIDTH from the
+    #     sprite-native geometry field using the production view-matrix
+    #     radial camera-to-target distance.
+    #
+    # close_width_blend:
+    #     Gate-1 production candidate. Keep proxy width outside the
+    #     very-close regime, keep radial sprite-native width inside it,
+    #     and use smoothstep between the two measured crossover bounds.
+    #     HEIGHT, placement, anchor, visibility and support-depth logic
+    #     remain unchanged.
     # --------------------------------------------------------
 
     target_box_w = float(
@@ -2107,7 +2586,11 @@ def render_he_actor_view_matrix(
 
     geometry_prediction = None
 
-    if geometry_mode == "sprite_native":
+    if geometry_mode in {
+        "sprite_native",
+        "sprite_native_width",
+        "close_width_blend",
+    }:
 
         if sprite_geometry is None:
 
@@ -2118,6 +2601,31 @@ def render_he_actor_view_matrix(
             return (
                 frame,
                 meta,
+            )
+
+        if geometry_mode in {
+            "sprite_native_width",
+            "close_width_blend",
+        }:
+            geometry_query_distance_m = float(
+                sprite_info[
+                    "query_distance_m"
+                ]
+            )
+            geometry_depth_coordinate = (
+                "view_matrix_radial_distance"
+            )
+        else:
+            # Retain the old full sprite-native behavior only as a
+            # diagnostic A/B mode. Gate-1 production candidate is the
+            # width-only radial-distance mode above.
+            geometry_query_distance_m = float(
+                box[
+                    "depth_m"
+                ]
+            )
+            geometry_depth_coordinate = (
+                "camera_forward_center_depth"
             )
 
         geometry_prediction = (
@@ -2137,11 +2645,7 @@ def render_he_actor_view_matrix(
                     ),
 
                 depth_m=
-                    float(
-                        box[
-                            "depth_m"
-                        ]
-                    ),
+                    geometry_query_distance_m,
 
                 target_width=
                     width,
@@ -2152,6 +2656,18 @@ def render_he_actor_view_matrix(
                 target_fov=
                     fov,
             )
+        )
+
+        meta[
+            "sprite_geometry_query_distance_m"
+        ] = float(
+            geometry_query_distance_m
+        )
+
+        meta[
+            "sprite_geometry_depth_coordinate"
+        ] = str(
+            geometry_depth_coordinate
         )
 
         if not geometry_prediction.get(
@@ -2174,23 +2690,162 @@ def render_he_actor_view_matrix(
                 meta,
             )
 
-        target_box_w = float(
+        native_width_px = float(
             geometry_prediction[
                 "box_width_px"
             ]
         )
 
-        target_box_h = float(
-            geometry_prediction[
-                "box_height_px"
+        proxy_width_px = float(
+            box[
+                "box_width"
             ]
         )
 
-        warp_alpha_threshold = int(
-            geometry_prediction[
-                "geometry_alpha_threshold"
-            ]
-        )
+        if geometry_mode == "sprite_native":
+            target_box_w = float(
+                native_width_px
+            )
+
+            # Legacy diagnostic mode: replace height too.
+            target_box_h = float(
+                geometry_prediction[
+                    "box_height_px"
+                ]
+            )
+
+            # Full sprite-native mode uses the geometry table's alpha
+            # threshold for both dimensions, preserving previous A/B.
+            warp_alpha_threshold = int(
+                geometry_prediction[
+                    "geometry_alpha_threshold"
+                ]
+            )
+
+        elif geometry_mode == "sprite_native_width":
+            target_box_w = float(
+                native_width_px
+            )
+
+            # Width-only diagnostic: preserve center-depth height.
+            target_box_h = float(
+                box[
+                    "box_height"
+                ]
+            )
+
+        elif geometry_mode == "close_width_blend":
+            near_m = float(
+                close_width_blend_near_m
+            )
+            far_m = float(
+                close_width_blend_far_m
+            )
+
+            if not (
+                near_m > 0.0
+                and
+                far_m > near_m
+            ):
+                raise ValueError(
+                    "close_width_blend requires "
+                    "0 < near_m < far_m, got "
+                    f"{near_m}, {far_m}"
+                )
+
+            radial_m = float(
+                geometry_query_distance_m
+            )
+
+            if radial_m <= near_m:
+                native_weight = 1.0
+            elif radial_m >= far_m:
+                native_weight = 0.0
+            else:
+                # 0 at far bound -> 1 at near bound.
+                linear_t = (
+                    far_m
+                    -
+                    radial_m
+                ) / (
+                    far_m
+                    -
+                    near_m
+                )
+
+                # C1-continuous smoothstep. This prevents a visible
+                # width-velocity jump when entering/leaving the close
+                # regime.
+                native_weight = (
+                    linear_t
+                    *
+                    linear_t
+                    *
+                    (
+                        3.0
+                        -
+                        2.0
+                        *
+                        linear_t
+                    )
+                )
+
+            target_box_w = (
+                (
+                    1.0
+                    -
+                    native_weight
+                )
+                *
+                proxy_width_px
+                +
+                native_weight
+                *
+                native_width_px
+            )
+
+            # Height stays fully frozen on center-depth geometry.
+            target_box_h = float(
+                box[
+                    "box_height"
+                ]
+            )
+
+            meta[
+                "close_width_blend_near_m"
+            ] = float(
+                near_m
+            )
+
+            meta[
+                "close_width_blend_far_m"
+            ] = float(
+                far_m
+            )
+
+            meta[
+                "close_width_blend_weight_native"
+            ] = float(
+                native_weight
+            )
+
+            meta[
+                "close_width_proxy_width_px"
+            ] = float(
+                proxy_width_px
+            )
+
+            meta[
+                "close_width_native_width_px"
+            ] = float(
+                native_width_px
+            )
+
+            meta[
+                "close_width_final_width_px"
+            ] = float(
+                target_box_w
+            )
 
         meta[
             "geometry_version"
@@ -2248,12 +2903,10 @@ def render_he_actor_view_matrix(
         frame_h=height,
 
         target_cx=
-            box[
-                "cx"
-            ],
+            render_target_x,
 
         target_bottom_y=
-            render_bottom_y,
+            render_target_y,
 
         target_box_w=
             target_box_w,
@@ -2262,18 +2915,172 @@ def render_he_actor_view_matrix(
             target_box_h,
 
         anchor_x=
-            sprite_info[
-                "anchor_x"
-            ],
+            render_source_anchor_x,
 
         anchor_y=
-            sprite_info[
-                "anchor_y"
-            ],
+            render_source_anchor_y,
 
         alpha_threshold=
             warp_alpha_threshold,
     )
+
+    # --------------------------------------------------------
+    # Analytic pre-clipping visible alpha bbox.
+    #
+    # target_box_w/h describe the requested visible silhouette
+    # size, but the selected source anchor does not have to be
+    # the alpha-bbox center/bottom. Derive the actual target
+    # alpha bounds from the source visible bbox and the exact
+    # subpixel transform so close-range QA compares like with like.
+    # --------------------------------------------------------
+
+    source_visible_bbox = (
+        resize_info[
+            "visible_bbox"
+        ]
+    )
+
+    target_visible_x1 = (
+        float(
+            resize_info[
+                "float_x1"
+            ]
+        )
+        +
+        float(
+            source_visible_bbox[
+                "x1"
+            ]
+        )
+        *
+        float(
+            resize_info[
+                "scale_x"
+            ]
+        )
+    )
+
+    target_visible_y1 = (
+        float(
+            resize_info[
+                "float_y1"
+            ]
+        )
+        +
+        float(
+            source_visible_bbox[
+                "y1"
+            ]
+        )
+        *
+        float(
+            resize_info[
+                "scale_y"
+            ]
+        )
+    )
+
+    target_visible_x2 = (
+        float(
+            resize_info[
+                "float_x1"
+            ]
+        )
+        +
+        (
+            float(
+                source_visible_bbox[
+                    "x2"
+                ]
+            )
+            +
+            1.0
+        )
+        *
+        float(
+            resize_info[
+                "scale_x"
+            ]
+        )
+    )
+
+    target_visible_y2 = (
+        float(
+            resize_info[
+                "float_y1"
+            ]
+        )
+        +
+        (
+            float(
+                source_visible_bbox[
+                    "y2"
+                ]
+            )
+            +
+            1.0
+        )
+        *
+        float(
+            resize_info[
+                "scale_y"
+            ]
+        )
+    )
+
+    meta[
+        "target_visible_bbox_unclipped"
+    ] = {
+        "x1":
+            float(
+                target_visible_x1
+            ),
+
+        "y1":
+            float(
+                target_visible_y1
+            ),
+
+        "x2":
+            float(
+                target_visible_x2
+            ),
+
+        "y2":
+            float(
+                target_visible_y2
+            ),
+
+        "width_px":
+            float(
+                target_visible_x2
+                -
+                target_visible_x1
+            ),
+
+        "height_px":
+            float(
+                target_visible_y2
+                -
+                target_visible_y1
+            ),
+
+        "center_x":
+            float(
+                (
+                    target_visible_x1
+                    +
+                    target_visible_x2
+                )
+                /
+                2.0
+            ),
+
+        "bottom_y":
+            float(
+                target_visible_y2
+            ),
+    }
 
     if resize_info.get(
         "fully_outside_frame",
@@ -2364,12 +3171,152 @@ def render_he_actor_view_matrix(
         global_alpha=1.0,
     )
 
+    alpha_binary = (
+        full_mask
+        >=
+        int(
+            warp_alpha_threshold
+        )
+    )
+
+    if not np.any(
+        alpha_binary
+    ):
+        alpha_binary = (
+            full_mask > 0
+        )
+
+    alpha_ys, alpha_xs = np.where(
+        alpha_binary
+    )
+
+    if (
+        len(alpha_xs) > 0
+        and
+        len(alpha_ys) > 0
+    ):
+        alpha_x1 = int(
+            alpha_xs.min()
+        )
+        alpha_x2 = int(
+            alpha_xs.max()
+        )
+        alpha_y1 = int(
+            alpha_ys.min()
+        )
+        alpha_y2 = int(
+            alpha_ys.max()
+        )
+
+        meta[
+            "rendered_alpha_bbox"
+        ] = {
+            "x1":
+                alpha_x1,
+
+            "y1":
+                alpha_y1,
+
+            "x2":
+                alpha_x2,
+
+            "y2":
+                alpha_y2,
+
+            "width_px":
+                float(
+                    alpha_x2
+                    -
+                    alpha_x1
+                    +
+                    1
+                ),
+
+            "height_px":
+                float(
+                    alpha_y2
+                    -
+                    alpha_y1
+                    +
+                    1
+                ),
+
+            "center_x":
+                float(
+                    (
+                        alpha_x1
+                        +
+                        alpha_x2
+                    )
+                    /
+                    2.0
+                ),
+
+            "bottom_y":
+                float(
+                    alpha_y2
+                ),
+
+            "alpha_threshold":
+                int(
+                    warp_alpha_threshold
+                ),
+        }
+
     rendered = bool(
         np.any(
             full_mask > 0
         )
     )
+    meta[
+        "anchor_mode"
+    ] = anchor_mode
 
+    meta[
+        "source_anchor_x_px"
+    ] = float(
+        render_source_anchor_x
+    )
+
+    meta[
+        "source_anchor_y_px"
+    ] = float(
+        render_source_anchor_y
+    )
+
+    meta[
+        "target_anchor_x_px"
+    ] = float(
+        render_target_x
+    )
+
+    meta[
+        "target_anchor_y_px"
+    ] = float(
+        render_target_y
+    )
+
+    meta[
+        "legacy_source_anchor_x_px"
+    ] = float(
+        sprite_info[
+            "anchor_x"
+        ]
+    )
+
+    meta[
+        "legacy_source_anchor_y_px"
+    ] = float(
+        sprite_info[
+            "anchor_y"
+        ]
+    )
+
+    meta[
+        "target_physical_support"
+    ] = (
+        target_support_anchor
+    )
     meta.update({
         "rendered":
             rendered,
