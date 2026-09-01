@@ -3800,6 +3800,38 @@ def build_generation_signature(
     }
 
 
+def generation_values_equivalent(existing, requested):
+    """Compare signatures exactly except for harmless platform float noise."""
+
+    if isinstance(existing, dict) and isinstance(requested, dict):
+        return (
+            set(existing) == set(requested)
+            and all(
+                generation_values_equivalent(existing[key], requested[key])
+                for key in existing
+            )
+        )
+
+    if isinstance(existing, list) and isinstance(requested, list):
+        return (
+            len(existing) == len(requested)
+            and all(
+                generation_values_equivalent(left, right)
+                for left, right in zip(existing, requested)
+            )
+        )
+
+    if isinstance(existing, float) and isinstance(requested, float):
+        return math.isclose(
+            existing,
+            requested,
+            rel_tol=1.0e-12,
+            abs_tol=1.0e-12,
+        )
+
+    return existing == requested
+
+
 def initialize_or_validate_generation_config(
     output_dir,
     args,
@@ -3857,11 +3889,12 @@ def initialize_or_validate_generation_config(
             )
 
         if (
-            existing.get(
-                "generation"
+            not generation_values_equivalent(
+                existing.get(
+                    "generation"
+                ),
+                signature,
             )
-            !=
-            signature
         ):
 
             raise RuntimeError(
