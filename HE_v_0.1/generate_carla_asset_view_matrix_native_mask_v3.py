@@ -2939,7 +2939,7 @@ def compute_actor_projected_bbox_native(
             ),
         ]
 
-        overflow_left_px = max(
+    overflow_left_px = max(
         0.0,
         -float(
             raw_x1
