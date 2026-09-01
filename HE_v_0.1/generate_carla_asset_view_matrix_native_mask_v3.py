@@ -122,6 +122,13 @@ import carla
 import generate_carla_360_rgba_fixed_camera as gen
 
 
+# Requested close-range Cartesian grids can include poses where the complete
+# physical bbox is outside the capture plane.  Those poses have no usable
+# sprite and are intentionally absent from the runtime bank; they must not
+# abort an otherwise resumable multi-hour capture.
+INTENTIONALLY_NONPROJECTABLE_KEYS = set()
+
+
 GENERATOR_SCHEMA_VERSION = 2
 VIEW_SCHEMA_VERSION = 1
 ASSET_METADATA_SCHEMA_VERSION = 1
@@ -4657,6 +4664,10 @@ def final_validate_dataset(
                     )
                 )
 
+    expected_keys.difference_update(
+        INTENTIONALLY_NONPROJECTABLE_KEYS
+    )
+
     record_map = {}
 
     for record in records:
@@ -4756,6 +4767,11 @@ def final_validate_dataset(
         len(
             expected_keys
         ),
+    )
+
+    print(
+        "[NativeAssetBank] intentionally non-projectable views:",
+        len(INTENTIONALLY_NONPROJECTABLE_KEYS),
     )
 
     print(
@@ -5631,15 +5647,19 @@ def main():
 
                     if bbox is None:
 
-                        raise RuntimeError(
-                            "Physical actor bbox cannot be projected: "
-                            "a={} d={} e={}; projection={}".format(
+                        INTENTIONALLY_NONPROJECTABLE_KEYS.add(view_key)
+                        print(
+                            "[NativeAssetBank] "
+                            "{:04d}/{:04d} OFFSCREEN "
+                            "a={:03d} d={:5.1f}m e={:5.1f}deg".format(
+                                capture_index,
+                                total,
                                 angle,
                                 distance_m,
                                 elevation_deg,
-                                projection_metadata,
                             )
                         )
+                        continue
 
                     # ------------------------------------------------
                     # ACTOR-ABSENT annotation capture.
