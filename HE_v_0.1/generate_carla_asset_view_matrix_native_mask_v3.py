@@ -105,6 +105,7 @@ from __future__ import print_function
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import os
@@ -282,6 +283,17 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--view-manifest",
+        type=Path,
+        default=None,
+        help=(
+            "Optional CSV containing the exact angle_deg,distance_m,"
+            "elevation_deg tuples to capture. This supports irregular "
+            "view surfaces while retaining the established view schema."
+        ),
+    )
+
+    parser.add_argument(
         "--full-dataset",
         action="store_true",
         help=(
@@ -384,6 +396,14 @@ def parse_args():
 
     args = parser.parse_args()
 
+    if args.view_manifest is not None and (
+        args.full_dataset or args.all_angles
+    ):
+        raise RuntimeError(
+            "--view-manifest cannot be combined with --full-dataset or "
+            "--all-angles."
+        )
+
     if args.full_dataset:
 
         args.angles = list(
@@ -465,11 +485,18 @@ def parse_args():
 
     for value in args.distances:
 
-        if value <= 0.0:
+        if args.view_manifest is None and value <= 0.0:
 
             raise RuntimeError(
                 "Distances must be positive."
             )
+
+    requested_views = requested_views_from_args(args)
+    if args.view_manifest is not None:
+        args.angles = list(dict.fromkeys(view[0] for view in requested_views))
+        args.distances = list(dict.fromkeys(view[1] for view in requested_views))
+        args.elevations = list(dict.fromkeys(view[2] for view in requested_views))
+    args.requested_view_keys = set(requested_views)
 
     return args
 
@@ -518,6 +545,62 @@ def make_view_key(
             6,
         ),
     )
+
+
+def requested_views_from_args(args):
+    if args.view_manifest is None:
+        return [
+            make_view_key(angle, distance, elevation)
+            for distance in args.distances
+            for elevation in args.elevations
+            for angle in args.angles
+        ]
+
+    path = Path(args.view_manifest)
+    if not path.is_file():
+        raise FileNotFoundError(
+            "View manifest not found: {}".format(path)
+        )
+
+    views = []
+    with path.open("r", newline="", encoding="utf-8") as stream:
+        reader = csv.DictReader(stream)
+        required = {"angle_deg", "distance_m", "elevation_deg"}
+        if not required.issubset(set(reader.fieldnames or [])):
+            raise RuntimeError(
+                "View manifest must contain columns: {}".format(
+                    ", ".join(sorted(required))
+                )
+            )
+        for line_number, row in enumerate(reader, start=2):
+            try:
+                views.append(
+                    make_view_key(
+                        row["angle_deg"],
+                        row["distance_m"],
+                        row["elevation_deg"],
+                    )
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    "Invalid view manifest row {}: {}".format(
+                        line_number, exc
+                    )
+                )
+
+    if not views:
+        raise RuntimeError("View manifest contains no capture rows.")
+    if len(set(views)) != len(views):
+        raise RuntimeError("View manifest contains duplicate capture keys.")
+    return views
+
+
+def requested_views_sha256(views):
+    payload = json.dumps(
+        [list(view) for view in views],
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def file_is_nonempty(
@@ -3639,7 +3722,7 @@ def build_generation_signature(
         )
     )
 
-    return {
+    signature = {
         "generator_schema_version":
             GENERATOR_SCHEMA_VERSION,
 
@@ -3798,6 +3881,18 @@ def build_generation_signature(
         "weather":
             "ClearNoon",
     }
+
+    if args.view_manifest is not None:
+        requested_views = requested_views_from_args(args)
+        signature.update({
+            "view_sampling": "explicit_manifest",
+            "requested_view_count": int(len(requested_views)),
+            "requested_views_sha256": requested_views_sha256(
+                requested_views
+            ),
+        })
+
+    return signature
 
 
 def generation_values_equivalent(existing, requested):
@@ -4681,21 +4776,9 @@ def final_validate_dataset(
         output_dir
     )
 
-    expected_keys = set()
-
-    for distance in args.distances:
-
-        for elevation in args.elevations:
-
-            for angle in args.angles:
-
-                expected_keys.add(
-                    make_view_key(
-                        angle,
-                        distance,
-                        elevation,
-                    )
-                )
+    expected_keys = set(
+        requested_views_from_args(args)
+    )
 
     expected_keys.difference_update(
         INTENTIONALLY_NONPROJECTABLE_KEYS
@@ -5159,19 +5242,7 @@ def main():
 
         print(
             "[NativeAssetBank] requested views:",
-            (
-                len(
-                    args.angles
-                )
-                *
-                len(
-                    args.distances
-                )
-                *
-                len(
-                    args.elevations
-                )
-            ),
+            len(args.requested_view_keys),
         )
 
         print(
@@ -5444,17 +5515,17 @@ def main():
             ),
         )
 
+        first_angle, first_distance, first_elevation = (
+            requested_views_from_args(args)[0]
+        )
+
         first_camera_tf = build_view_camera_transform_from_target(
             target_location=(
                 calibration_target_location
             ),
             base_yaw_deg=base_yaw,
-            distance_m=args.distances[
-                0
-            ],
-            elevation_deg=args.elevations[
-                0
-            ],
+            distance_m=first_distance,
+            elevation_deg=first_elevation,
         )
 
         (
@@ -5489,19 +5560,7 @@ def main():
                 instance_queue
             )
 
-        total = (
-            len(
-                args.angles
-            )
-            *
-            len(
-                args.distances
-            )
-            *
-            len(
-                args.elevations
-            )
-        )
+        total = len(args.requested_view_keys)
 
         capture_index = 0
 
@@ -5528,9 +5587,6 @@ def main():
             for elevation_deg in args.elevations:
 
                 for angle in args.angles:
-
-                    capture_index += 1
-
                     angle = int(
                         angle
                     ) % 360
@@ -5540,6 +5596,11 @@ def main():
                         distance_m,
                         elevation_deg,
                     )
+
+                    if view_key not in args.requested_view_keys:
+                        continue
+
+                    capture_index += 1
 
                     if (
                         args.resume
