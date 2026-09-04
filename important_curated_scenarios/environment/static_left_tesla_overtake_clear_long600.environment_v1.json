@@ -1,0 +1,5 @@
+{
+  "schema": "scenario_environment_v1",
+  "scenario_id": "static_left_tesla_overtake_clear_long600",
+  "weather_preset": "ClearNoon"
+}

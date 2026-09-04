@@ -188,6 +188,416 @@ def make_camera_intrinsic(
     return k
 
 
+def _transform_rotation_matrix(transform):
+    """Return the CARLA local-to-parent 3-D rotation matrix."""
+    return np.asarray(transform.get_matrix(), dtype=np.float64)[:3, :3]
+
+
+def _transform_homogeneous_point(matrix, x, y):
+    point = np.asarray([float(x), float(y), 1.0], dtype=np.float64)
+    projected = np.asarray(matrix, dtype=np.float64) @ point
+    if abs(float(projected[2])) <= 1e-8:
+        return None
+    return projected[:2] / projected[2]
+
+
+def warp_view_matrix_sprite_camera_rotation(
+    sprite_rgba,
+    actor_tf,
+    camera_tf,
+    physical_bbox,
+    sprite_info,
+    capture_metadata,
+    target_support_anchor,
+    width,
+    height,
+    fov,
+    silhouette_scale=1.0,
+    alpha_threshold=10,
+):
+    """Reproject a centered far-bank capture into an arbitrary camera.
+
+    The 4320 bank records a camera that looks directly at the actor. Runtime
+    side cameras generally do not. A pure camera-rotation homography corrects
+    that optical-axis difference without inventing a per-camera angle offset.
+    Translation and elevation differences are approximated by the unique 2-D
+    similarity that maps the same physical bbox support point and bbox center
+    from the source capture into the runtime camera.
+    """
+    required_sprite = (
+        "selected_angle",
+        "selected_elevation_deg",
+        "crop_x1_px",
+        "crop_y1_px",
+        "source_ground_anchor_x",
+        "source_ground_anchor_y",
+    )
+    if any(sprite_info.get(name) is None for name in required_sprite):
+        return None
+    if target_support_anchor is None or not physical_bbox:
+        return None
+
+    source_width = float(capture_metadata.get("image_width_px", 0.0))
+    source_height = float(capture_metadata.get("image_height_px", 0.0))
+    source_fov = float(capture_metadata.get("fov_deg", 0.0))
+    if source_width <= 0.0 or source_height <= 0.0 or source_fov <= 0.0:
+        return None
+
+    target_center = project_asset_physical_bbox_center(
+        actor_tf=actor_tf,
+        camera_tf=camera_tf,
+        physical_bbox=physical_bbox,
+        width=width,
+        height=height,
+        fov=fov,
+    )
+    if target_center is None:
+        return None
+    source_actor_tf = carla.Transform()
+    source_camera_tf = carla.Transform(
+        rotation=carla.Rotation(
+            pitch=-float(sprite_info["selected_elevation_deg"]),
+            yaw=float(sprite_info["selected_angle"]) - 180.0,
+        )
+    )
+    source_camera_to_actor = (
+        _transform_rotation_matrix(source_actor_tf).T
+        @ _transform_rotation_matrix(source_camera_tf)
+    )
+    actor_to_target_camera = (
+        _transform_rotation_matrix(camera_tf).T
+        @ _transform_rotation_matrix(actor_tf)
+    )
+    ray_rotation = actor_to_target_camera @ source_camera_to_actor
+
+    # CARLA camera rays are [forward, right, up], while image homogeneous
+    # coordinates are [right, -up, forward].
+    camera_to_image_axes = np.asarray([
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, -1.0],
+        [1.0, 0.0, 0.0],
+    ], dtype=np.float64)
+    image_to_camera_axes = np.linalg.inv(camera_to_image_axes)
+    source_k = make_camera_intrinsic(source_width, source_height, source_fov)
+    target_k = make_camera_intrinsic(width, height, fov)
+    crop_to_full = np.asarray([
+        [1.0, 0.0, float(sprite_info["crop_x1_px"])],
+        [0.0, 1.0, float(sprite_info["crop_y1_px"])],
+        [0.0, 0.0, 1.0],
+    ], dtype=np.float64)
+    rotation_h = (
+        target_k
+        @ camera_to_image_axes
+        @ ray_rotation
+        @ image_to_camera_axes
+        @ np.linalg.inv(source_k)
+        @ crop_to_full
+    )
+
+    source_support = _transform_homogeneous_point(
+        rotation_h,
+        sprite_info["source_ground_anchor_x"],
+        sprite_info["source_ground_anchor_y"],
+    )
+    if source_support is None:
+        return None
+    source_center = _transform_homogeneous_point(
+        rotation_h,
+        float(capture_metadata["camera_cx_px"])
+        - float(sprite_info["crop_x1_px"]),
+        float(capture_metadata["camera_cy_px"])
+        - float(sprite_info["crop_y1_px"]),
+    )
+    if source_center is None:
+        return None
+
+    source_vector = source_center - source_support
+    target_support = np.asarray([
+        float(target_support_anchor["u"]),
+        float(target_support_anchor["v"]),
+    ], dtype=np.float64)
+    target_center_xy = np.asarray([
+        float(target_center["u"]),
+        float(target_center["v"]),
+    ], dtype=np.float64)
+    target_vector = target_center_xy - target_support
+    denominator = float(np.dot(source_vector, source_vector))
+    if denominator <= 1e-8:
+        return None
+
+    # The complex ratio target_vector/source_vector gives the unique 2-D
+    # similarity that maps both the physical support point and bbox center.
+    # Unlike radial scaling alone, this also accounts for a source elevation
+    # sample that is near, but not identical to, the runtime camera elevation.
+    similarity_a = float(np.dot(target_vector, source_vector) / denominator)
+    similarity_b = float(
+        (
+            target_vector[1] * source_vector[0]
+            - target_vector[0] * source_vector[1]
+        ) / denominator
+    )
+    similarity_a *= float(silhouette_scale)
+    similarity_b *= float(silhouette_scale)
+    similarity = np.asarray([
+        [similarity_a, -similarity_b],
+        [similarity_b, similarity_a],
+    ], dtype=np.float64)
+    translation = target_support - similarity @ source_support
+    anchor_similarity = np.asarray([
+        [similarity[0, 0], similarity[0, 1], translation[0]],
+        [similarity[1, 0], similarity[1, 1], translation[1]],
+        [0.0, 0.0, 1.0],
+    ], dtype=np.float64)
+    final_h = anchor_similarity @ rotation_h
+    warped = cv2.warpPerspective(
+        sprite_rgba,
+        final_h,
+        (int(width), int(height)),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(0, 0, 0, 0),
+    )
+    alpha_y, alpha_x = np.where(warped[:, :, 3] > int(alpha_threshold))
+    if len(alpha_x) == 0 or len(alpha_y) == 0:
+        return None
+    visible_bbox = {
+        "x1": int(alpha_x.min()),
+        "y1": int(alpha_y.min()),
+        "x2": int(alpha_x.max()),
+        "y2": int(alpha_y.max()),
+    }
+    resize_info = {
+        "mode": "camera_rotation_homography",
+        "fully_outside_frame": False,
+        "paste": {
+            "x1": 0,
+            "y1": 0,
+            "sprite_width": int(width),
+            "sprite_height": int(height),
+        },
+        "float_x1": 0.0,
+        "float_y1": 0.0,
+        "scale_x": 1.0,
+        "scale_y": 1.0,
+        "visible_bbox": visible_bbox,
+    }
+    return warped, resize_info, {
+        "homography": final_h.tolist(),
+        "similarity_scale": float(math.hypot(similarity_a, similarity_b)),
+        "similarity_rotation_deg": float(
+            math.degrees(math.atan2(similarity_b, similarity_a))
+        ),
+        "source_support_after_rotation_px": {
+            "x": float(source_support[0]),
+            "y": float(source_support[1]),
+        },
+        "source_center_after_rotation_px": {
+            "x": float(source_center[0]),
+            "y": float(source_center[1]),
+        },
+    }
+
+
+def _linear_interpolation_bracket(values, query):
+    ordered = sorted(float(value) for value in values)
+    query = float(query)
+    if query <= ordered[0]:
+        return ordered[0], ordered[0], 0.0
+    if query >= ordered[-1]:
+        return ordered[-1], ordered[-1], 0.0
+    for lower, upper in zip(ordered, ordered[1:]):
+        if lower <= query <= upper:
+            weight = (query - lower) / (upper - lower)
+            return lower, upper, weight
+    return ordered[-1], ordered[-1], 0.0
+
+
+def _circular_interpolation_bracket(values, query):
+    ordered = sorted(float(value) % 360.0 for value in values)
+    query = float(query) % 360.0
+    extended = ordered + [ordered[0] + 360.0]
+    adjusted = query if query >= ordered[0] else query + 360.0
+    for lower, upper in zip(extended, extended[1:]):
+        if lower <= adjusted <= upper:
+            weight = 0.0 if upper == lower else (adjusted - lower) / (upper - lower)
+            return lower % 360.0, upper % 360.0, weight
+    return ordered[0], ordered[0], 0.0
+
+
+def _view_matrix_record_info(base_info, record, angle, distance, elevation):
+    info = dict(base_info)
+    info.update({
+        "selected_angle": int(round(float(angle))) % 360,
+        "selected_distance_m": float(distance),
+        "selected_elevation_deg": float(elevation),
+        "sprite_path": str(record["rgba_path"]),
+        "crop_x1_px": record.get("crop_x1_px"),
+        "crop_y1_px": record.get("crop_y1_px"),
+        "source_ground_anchor_x": record.get("source_ground_anchor_x"),
+        "source_ground_anchor_y": record.get("source_ground_anchor_y"),
+        "bbox_center_distance_m": record.get("bbox_center_distance_m"),
+    })
+    return info
+
+
+def continuous_view_matrix_samples(sprite_info, view_matrix):
+    """Return trilinear angle/distance/elevation samples from a 4320 bank."""
+    angle_lower, angle_upper, angle_weight = _circular_interpolation_bracket(
+        view_matrix["angles"], sprite_info["relative_angle_deg"]
+    )
+    distance_lower, distance_upper, distance_weight = _linear_interpolation_bracket(
+        view_matrix["distances"], sprite_info["query_distance_m"]
+    )
+    elevation_lower, elevation_upper, elevation_weight = _linear_interpolation_bracket(
+        view_matrix["elevations"], sprite_info["query_elevation_deg"]
+    )
+    weighted = []
+    for angle in {angle_lower, angle_upper}:
+        aw = 1.0 if angle_lower == angle_upper else (
+            1.0 - angle_weight if angle == angle_lower else angle_weight
+        )
+        for distance in {distance_lower, distance_upper}:
+            dw = 1.0 if distance_lower == distance_upper else (
+                1.0 - distance_weight if distance == distance_lower else distance_weight
+            )
+            for elevation in {elevation_lower, elevation_upper}:
+                ew = 1.0 if elevation_lower == elevation_upper else (
+                    1.0 - elevation_weight
+                    if elevation == elevation_lower
+                    else elevation_weight
+                )
+                key = (
+                    int(round(float(angle))) % 360,
+                    float(distance),
+                    float(elevation),
+                )
+                record = view_matrix["index"].get(key)
+                weight = aw * dw * ew
+                if record is not None and weight > 0.0:
+                    weighted.append((
+                        weight,
+                        _view_matrix_record_info(
+                            sprite_info, record, angle, distance, elevation
+                        ),
+                    ))
+    total = sum(weight for weight, unused in weighted)
+    if total <= 0.0:
+        return []
+    return [(weight / total, info) for weight, info in weighted]
+
+
+def warp_continuous_view_matrix_camera_rotation(
+    sprite_info,
+    view_matrix,
+    sprite_cache,
+    actor_tf,
+    camera_tf,
+    physical_bbox,
+    target_support_anchor,
+    width,
+    height,
+    fov,
+    silhouette_scale=1.0,
+    alpha_threshold=10,
+):
+    samples = continuous_view_matrix_samples(sprite_info, view_matrix)
+    if not samples:
+        return None
+    rendered_samples = []
+    for weight, sample_info in samples:
+        sprite = sprite_cache.load_rgba(sample_info["sprite_path"])
+        result = warp_view_matrix_sprite_camera_rotation(
+            sprite_rgba=sprite,
+            actor_tf=actor_tf,
+            camera_tf=camera_tf,
+            physical_bbox=physical_bbox,
+            sprite_info=sample_info,
+            capture_metadata=view_matrix.get("capture_metadata") or {},
+            target_support_anchor=target_support_anchor,
+            width=width,
+            height=height,
+            fov=fov,
+            silhouette_scale=silhouette_scale,
+            alpha_threshold=alpha_threshold,
+        )
+        if result is None:
+            continue
+        warped, unused_resize, sample_meta = result
+        alpha_y, alpha_x = np.where(warped[:, :, 3] > int(alpha_threshold))
+        if len(alpha_x) == 0 or len(alpha_y) == 0:
+            continue
+        rendered_samples.append({
+            "weight": float(weight),
+            "angle_deg": int(sample_info["selected_angle"]),
+            "distance_m": float(sample_info["selected_distance_m"]),
+            "elevation_deg": float(sample_info["selected_elevation_deg"]),
+            "similarity_scale": sample_meta["similarity_scale"],
+            "bbox": {
+                "x1": float(alpha_x.min()),
+                "y1": float(alpha_y.min()),
+                "x2": float(alpha_x.max()),
+                "y2": float(alpha_y.max()),
+            },
+            "warped": warped,
+        })
+    if not rendered_samples:
+        return None
+
+    total_weight = sum(sample["weight"] for sample in rendered_samples)
+    target = {
+        name: sum(
+            sample["weight"] * sample["bbox"][name]
+            for sample in rendered_samples
+        ) / total_weight
+        for name in ("x1", "y1", "x2", "y2")
+    }
+    selected_key = (
+        int(sprite_info["selected_angle"]),
+        float(sprite_info["selected_distance_m"]),
+        float(sprite_info["selected_elevation_deg"]),
+    )
+    preferred = max(rendered_samples, key=lambda sample: sample["weight"])
+    for sample in rendered_samples:
+        sample_key = (
+            sample["angle_deg"],
+            sample["distance_m"],
+            sample["elevation_deg"],
+        )
+        if sample_key == selected_key:
+            preferred = sample
+            break
+
+    source_bbox = preferred["bbox"]
+    warped, resize_info = warp_view_matrix_sprite_to_box_subpixel(
+        sprite_rgba=preferred["warped"],
+        frame_w=int(width),
+        frame_h=int(height),
+        target_cx=(target["x1"] + target["x2"]) / 2.0,
+        target_bottom_y=target["y2"],
+        target_box_w=max(1.0, target["x2"] - target["x1"] + 1.0),
+        target_box_h=max(1.0, target["y2"] - target["y1"] + 1.0),
+        anchor_x=(source_bbox["x1"] + source_bbox["x2"]) / 2.0,
+        anchor_y=source_bbox["y2"],
+        alpha_threshold=alpha_threshold,
+        scale_mode="independent",
+    )
+    public_samples = [{
+        key: value for key, value in sample.items()
+        if key not in {"warped", "bbox"}
+    } | {"bbox": sample["bbox"]} for sample in rendered_samples]
+    return warped, resize_info, {
+        "interpolation": "trilinear_geometry_nearest_appearance",
+        "sample_count": len(rendered_samples),
+        "selected_appearance": {
+            "angle_deg": preferred["angle_deg"],
+            "distance_m": preferred["distance_m"],
+            "elevation_deg": preferred["elevation_deg"],
+        },
+        "target_bbox": target,
+        "samples": public_samples,
+    }
+
+
 # ============================================================
 # World -> image
 # ============================================================
@@ -304,6 +714,44 @@ def project_world_point(
                 ]
             ),
     }
+
+
+def project_asset_physical_bbox_center(
+    actor_tf,
+    camera_tf,
+    physical_bbox,
+    width,
+    height,
+    fov,
+):
+    if not physical_bbox:
+        return None
+    required = (
+        "local_center_x_m",
+        "local_center_y_m",
+        "local_center_z_m",
+    )
+    if any(physical_bbox.get(key) is None for key in required):
+        return None
+
+    actor_to_world = np.asarray(actor_tf.get_matrix(), dtype=np.float64)
+    center_world = actor_to_world @ np.asarray([
+        float(physical_bbox["local_center_x_m"]),
+        float(physical_bbox["local_center_y_m"]),
+        float(physical_bbox["local_center_z_m"]),
+        1.0,
+    ], dtype=np.float64)
+    return project_world_point(
+        point=carla.Location(
+            x=float(center_world[0]),
+            y=float(center_world[1]),
+            z=float(center_world[2]),
+        ),
+        world_to_camera=np.asarray(
+            camera_tf.get_inverse_matrix(), dtype=np.float64
+        ),
+        k=make_camera_intrinsic(width, height, fov),
+    )
 
 def project_asset_physical_support_anchor(
     actor_tf,
@@ -2119,6 +2567,13 @@ def render_he_actor_view_matrix(
     close_width_blend_far_m=5.90,
     scene_depth_m=None,
     scene_occlusion_margin_m=0.25,
+    silhouette_scale=1.0,
+    warp_scale_mode="independent",
+    viewpoint_lateral_sign=1.0,
+    center_depth_alpha_bbox_anchor=False,
+    camera_rotation_reprojection=False,
+    camera_rotation_reprojection_min_width_fraction=0.20,
+    camera_rotation_reprojection_min_bearing_deg=30.0,
 ):
 
     frame = (
@@ -2131,18 +2586,43 @@ def render_he_actor_view_matrix(
         .strip()
         .lower()
     )
+    silhouette_scale = float(silhouette_scale)
+    warp_scale_mode = str(warp_scale_mode).strip().lower()
+    viewpoint_lateral_sign = float(viewpoint_lateral_sign)
+    if viewpoint_lateral_sign not in {-1.0, 1.0}:
+        raise ValueError(
+            "viewpoint_lateral_sign must be -1.0 or 1.0, got "
+            f"{viewpoint_lateral_sign}"
+        )
+    if warp_scale_mode not in {
+        "independent",
+        "uniform_height_preserve_aspect",
+    }:
+        raise ValueError(
+            "warp_scale_mode must be 'independent' or "
+            "'uniform_height_preserve_aspect', got "
+            f"{warp_scale_mode!r}"
+        )
+    if not 0.90 <= silhouette_scale <= 1.10:
+        raise ValueError(
+            "silhouette_scale must be within [0.90, 1.10], got "
+            f"{silhouette_scale}"
+        )
 
     if geometry_mode not in {
         "proxy",
         "sprite_native",
         "sprite_native_width",
         "close_width_blend",
+        "sprite_alpha_metric",
+        "sprite_alpha_width_proxy_height",
     }:
         raise ValueError(
             "geometry_mode must be one of "
             "'proxy', 'sprite_native', "
-            "'sprite_native_width', or "
-            "'close_width_blend', got "
+            "'sprite_native_width', 'close_width_blend', or "
+            "'sprite_alpha_metric', or "
+            "'sprite_alpha_width_proxy_height', got "
             f"{geometry_mode!r}"
         )
     projection_mode = (
@@ -2186,6 +2666,25 @@ def render_he_actor_view_matrix(
             height=height,
             fov=fov,
         )
+
+        if (
+            not box.get("visible", False)
+            and geometry_mode in {
+                "sprite_alpha_metric",
+                "sprite_alpha_width_proxy_height",
+            }
+            and box.get("reason") == "footprint_intersects_camera_plane"
+        ):
+            box = project_virtual_actor_center_depth_billboard(
+                actor_tf=actor_tf,
+                camera_tf=camera_tf,
+                dimensions=dimensions,
+                width=width,
+                height=height,
+                fov=fov,
+            )
+            if box.get("visible", False):
+                box["visibility_fallback"] = "center_depth_billboard"
 
     meta = {
         "rendered":
@@ -2268,6 +2767,21 @@ def render_he_actor_view_matrix(
 
         "rendered_alpha_bbox":
             None,
+
+        "warp_scale_mode":
+            warp_scale_mode,
+
+        "viewpoint_lateral_sign":
+            float(viewpoint_lateral_sign),
+
+        "camera_rotation_reprojection":
+            bool(camera_rotation_reprojection),
+
+        "camera_rotation_reprojection_meta":
+            None,
+
+        "camera_rotation_reprojection_eligible":
+            False,
     
     }
 
@@ -2319,11 +2833,9 @@ def render_he_actor_view_matrix(
 
     state = {
         "x_m":
-            float(
-                box[
-                    "camera_right_m"
-                ]
-            ),
+            float(viewpoint_lateral_sign)
+            *
+            float(box["camera_right_m"]),
 
         "y_m":
             float(
@@ -2373,6 +2885,27 @@ def render_he_actor_view_matrix(
             frame,
             meta,
         )
+
+    sprite_rgba = sprite_cache.load_rgba(
+        sprite_info["sprite_path"]
+    )
+    source_alpha_y, source_alpha_x = np.where(
+        sprite_rgba[:, :, 3] > 10
+    )
+    if len(source_alpha_x) == 0 or len(source_alpha_y) == 0:
+        meta["reason"] = "empty_sprite_alpha"
+        return frame, meta
+
+    source_alpha_center_x = (
+        float(source_alpha_x.min()) + float(source_alpha_x.max())
+    ) / 2.0
+    source_alpha_bottom_y = float(source_alpha_y.max())
+    source_alpha_width_px = float(
+        source_alpha_x.max() - source_alpha_x.min() + 1
+    )
+    source_alpha_height_px = float(
+        source_alpha_y.max() - source_alpha_y.min() + 1
+    )
     # ========================================================
     # Physical source -> physical target anchor
     #
@@ -2415,10 +2948,55 @@ def render_he_actor_view_matrix(
         )
     )
 
+    alpha_metric_target_anchor = None
+    if geometry_mode == "sprite_alpha_metric":
+        target_bbox_center = project_asset_physical_bbox_center(
+            actor_tf=actor_tf,
+            camera_tf=camera_tf,
+            physical_bbox=physical_bbox,
+            width=width,
+            height=height,
+            fov=fov,
+        )
+        capture_metadata = view_matrix.get("capture_metadata") or {}
+        capture_fx = float(capture_metadata.get("camera_fx_px", 0.0))
+        capture_cx = float(capture_metadata.get("camera_cx_px", 0.0))
+        capture_cy = float(capture_metadata.get("camera_cy_px", 0.0))
+        crop_x1 = sprite_info.get("crop_x1_px")
+        crop_y1 = sprite_info.get("crop_y1_px")
+        if (
+            target_bbox_center is not None
+            and capture_fx > 0.0
+            and crop_x1 is not None
+            and crop_y1 is not None
+        ):
+            runtime_fx = float(width) / (
+                2.0 * math.tan(math.radians(float(fov)) / 2.0)
+            )
+            selected_distance = max(
+                float(sprite_info["selected_distance_m"]), 1e-6
+            )
+            runtime_depth = max(float(target_bbox_center["depth"]), 1e-6)
+            anchor_scale = (
+                runtime_fx / capture_fx * selected_distance / runtime_depth
+            )
+            source_center_x = capture_cx - float(crop_x1)
+            source_center_y = capture_cy - float(crop_y1)
+            alpha_metric_target_anchor = {
+                "x": float(target_bbox_center["u"])
+                + (source_alpha_center_x - source_center_x) * anchor_scale,
+                "y": float(target_bbox_center["v"])
+                + (source_alpha_bottom_y - source_center_y) * anchor_scale,
+            }
+
     use_physical_anchor = (
-        projection_mode
-        !=
-        "center_depth_billboard"
+        (
+            projection_mode != "center_depth_billboard"
+            or geometry_mode in {
+                "sprite_alpha_metric",
+                "sprite_alpha_width_proxy_height",
+            }
+        )
         and
         target_support_anchor
         is not None
@@ -2430,7 +3008,17 @@ def render_he_actor_view_matrix(
         is not None
     )
 
-    if use_physical_anchor:
+    if alpha_metric_target_anchor is not None:
+        render_target_x = float(alpha_metric_target_anchor["x"])
+        render_target_y = (
+            float(alpha_metric_target_anchor["y"])
+            + float(bottom_y_offset_px)
+        )
+        render_source_anchor_x = source_alpha_center_x
+        render_source_anchor_y = source_alpha_bottom_y
+        anchor_mode = "sprite_alpha_bbox_center_reprojection"
+
+    elif use_physical_anchor:
 
         render_target_x = float(
             target_support_anchor[
@@ -2461,6 +3049,16 @@ def render_he_actor_view_matrix(
         anchor_mode = (
             "physical_bbox_support_center"
         )
+
+    elif (
+        projection_mode == "center_depth_billboard"
+        and bool(center_depth_alpha_bbox_anchor)
+    ):
+        render_target_x = float(box["cx"])
+        render_target_y = float(render_bottom_y)
+        render_source_anchor_x = source_alpha_center_x
+        render_source_anchor_y = source_alpha_bottom_y
+        anchor_mode = "center_depth_alpha_bbox_center"
 
     else:
 
@@ -2585,6 +3183,47 @@ def render_he_actor_view_matrix(
     warp_alpha_threshold = 10
 
     geometry_prediction = None
+
+    if geometry_mode in {
+        "sprite_alpha_metric",
+        "sprite_alpha_width_proxy_height",
+    }:
+        capture_metadata = view_matrix.get("capture_metadata") or {}
+        capture_fx = float(capture_metadata.get("camera_fx_px", 0.0))
+        if capture_fx <= 0.0:
+            capture_width = float(capture_metadata.get("image_width_px", 0.0))
+            capture_fov = float(capture_metadata.get("fov_deg", 0.0))
+            if capture_width <= 0.0 or capture_fov <= 0.0:
+                meta["reason"] = "missing_capture_intrinsics"
+                return frame, meta
+            capture_fx = capture_width / (
+                2.0 * math.tan(math.radians(capture_fov) / 2.0)
+            )
+
+        runtime_fx = float(width) / (
+            2.0 * math.tan(math.radians(float(fov)) / 2.0)
+        )
+        # Pinhole image scale is inverse camera-forward depth. The selected
+        # far-bank capture distance is radial because its camera points at the
+        # actor, but the runtime camera can be strongly oblique (NEAT side
+        # cameras). Using runtime radial distance shrinks the sprite by cos(bearing).
+        query_distance = max(float(box["depth_m"]), 1e-6)
+        selected_distance = max(float(sprite_info["selected_distance_m"]), 1e-6)
+        alpha_metric_scale = (
+            runtime_fx / capture_fx * selected_distance / query_distance
+        )
+        target_box_w = source_alpha_width_px * alpha_metric_scale
+        if geometry_mode == "sprite_alpha_metric":
+            target_box_h = source_alpha_height_px * alpha_metric_scale
+        meta["geometry_version"] = (
+            "sprite_alpha_metric_v1"
+            if geometry_mode == "sprite_alpha_metric"
+            else "sprite_alpha_width_proxy_height_v1"
+        )
+        meta["sprite_alpha_metric_scale"] = float(alpha_metric_scale)
+        meta["sprite_alpha_metric_depth_coordinate"] = "camera_forward_depth"
+        meta["source_alpha_width_px"] = source_alpha_width_px
+        meta["source_alpha_height_px"] = source_alpha_height_px
 
     if geometry_mode in {
         "sprite_native",
@@ -2863,6 +3502,12 @@ def render_he_actor_view_matrix(
         warp_alpha_threshold
     )
 
+    # Uniform calibration around the physical support anchor. The neutral
+    # default preserves all accepted renderer behavior.
+    target_box_w *= silhouette_scale
+    target_box_h *= silhouette_scale
+    meta["silhouette_scale"] = silhouette_scale
+
     meta[
         "target_box_width_px"
     ] = float(
@@ -2875,14 +3520,6 @@ def render_he_actor_view_matrix(
         target_box_h
     )
 
-    sprite_rgba = (
-        sprite_cache.load_rgba(
-            sprite_info[
-                "sprite_path"
-            ]
-        )
-    )
-
     # --------------------------------------------------------
     # Frozen stable subpixel renderer.
     #
@@ -2893,36 +3530,85 @@ def render_he_actor_view_matrix(
     #     native-camera metric projection above
     # --------------------------------------------------------
 
-    (
-        warped_rgba,
-        resize_info,
-    ) = warp_view_matrix_sprite_to_box_subpixel(
-        sprite_rgba=sprite_rgba,
-
-        frame_w=width,
-        frame_h=height,
-
-        target_cx=
-            render_target_x,
-
-        target_bottom_y=
-            render_target_y,
-
-        target_box_w=
-            target_box_w,
-
-        target_box_h=
-            target_box_h,
-
-        anchor_x=
-            render_source_anchor_x,
-
-        anchor_y=
-            render_source_anchor_y,
-
-        alpha_threshold=
-            warp_alpha_threshold,
+    rotation_reprojection = None
+    optical_bearing_deg = abs(math.degrees(math.atan2(
+        float(box["camera_right_m"]), float(box["depth_m"])
+    )))
+    target_width_fraction = float(target_box_w) / max(float(width), 1.0)
+    rotation_reprojection_eligible = (
+        target_width_fraction
+        >= float(camera_rotation_reprojection_min_width_fraction)
+        or optical_bearing_deg
+        >= float(camera_rotation_reprojection_min_bearing_deg)
     )
+    meta["camera_rotation_reprojection_eligible"] = bool(
+        rotation_reprojection_eligible
+    )
+    meta["camera_rotation_reprojection_optical_bearing_deg"] = float(
+        optical_bearing_deg
+    )
+    meta["camera_rotation_reprojection_target_width_fraction"] = float(
+        target_width_fraction
+    )
+    if bool(camera_rotation_reprojection) and rotation_reprojection_eligible:
+        rotation_reprojection = warp_continuous_view_matrix_camera_rotation(
+            sprite_info=sprite_info,
+            view_matrix=view_matrix,
+            sprite_cache=sprite_cache,
+            actor_tf=actor_tf,
+            camera_tf=camera_tf,
+            physical_bbox=physical_bbox,
+            target_support_anchor=target_support_anchor,
+            width=width,
+            height=height,
+            fov=fov,
+            silhouette_scale=silhouette_scale,
+            alpha_threshold=warp_alpha_threshold,
+        )
+
+    if rotation_reprojection is not None:
+        warped_rgba, resize_info, reprojection_meta = rotation_reprojection
+        meta["camera_rotation_reprojection_meta"] = reprojection_meta
+        anchor_mode = "camera_rotation_physical_support"
+        visible_bbox = resize_info["visible_bbox"]
+        target_box_w = float(visible_bbox["x2"] - visible_bbox["x1"] + 1)
+        target_box_h = float(visible_bbox["y2"] - visible_bbox["y1"] + 1)
+        meta["target_box_width_px"] = target_box_w
+        meta["target_box_height_px"] = target_box_h
+    else:
+        (
+            warped_rgba,
+            resize_info,
+        ) = warp_view_matrix_sprite_to_box_subpixel(
+            sprite_rgba=sprite_rgba,
+
+            frame_w=width,
+            frame_h=height,
+
+            target_cx=
+                render_target_x,
+
+            target_bottom_y=
+                render_target_y,
+
+            target_box_w=
+                target_box_w,
+
+            target_box_h=
+                target_box_h,
+
+            anchor_x=
+                render_source_anchor_x,
+
+            anchor_y=
+                render_source_anchor_y,
+
+            alpha_threshold=
+                warp_alpha_threshold,
+
+            scale_mode=
+                warp_scale_mode,
+        )
 
     # --------------------------------------------------------
     # Analytic pre-clipping visible alpha bbox.

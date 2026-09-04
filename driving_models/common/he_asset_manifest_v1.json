@@ -4,6 +4,10 @@
     {
       "key": "vehicle.passenger_01",
       "folder": "tesla_model3_native_full_v3",
+      "close_banks": {
+        "left": "../sprite_bank_cartesian_close_production/tesla_model3_cartesian_close_left_dense360_v1",
+        "right": "../sprite_bank_cartesian_close_production/tesla_model3_cartesian_close_right_dense360_v1"
+      },
       "aliases": [
         "vehicle.tesla.model3",
         "tesla_model3"

@@ -1,0 +1,39 @@
+{
+  "schema": "resolved_clearance_validation_v1",
+  "status": "PASS",
+  "scenario_id": "static_left_tesla_overtake_clear_long600",
+  "resolved_path": "D:\\HallucinationEngine\\important_curated_scenarios\\resolved\\static_left_tesla_overtake_clear_long600.resolved_v2.json",
+  "actor_id": "static_left_tesla",
+  "ego_asset_key": "vehicle.passenger_01",
+  "actor_dimensions": {
+    "length_m": 4.792,
+    "width_m": 2.163,
+    "height_m": 1.488,
+    "source": "resolved_scenario"
+  },
+  "ego_dimensions": {
+    "length_m": 4.791779518127441,
+    "width_m": 2.163450002670288,
+    "height_m": 1.4876600503921509,
+    "source": "asset_metadata"
+  },
+  "common_frames": 601,
+  "minimum_clearance": {
+    "frame_idx": 127,
+    "t_s": 6.35,
+    "clearance_m": 1.3367749986648558,
+    "overlaps": false,
+    "center_distance_m": 5.780138406647372
+  },
+  "terminal_clearance": {
+    "frame_idx": 600,
+    "t_s": 30.0,
+    "clearance_m": 85.21859549551732,
+    "overlaps": false,
+    "center_distance_m": 90.06802984411283
+  },
+  "minimum_clearance_required_m": 1.0,
+  "minimum_terminal_clearance_required_m": 1.0,
+  "collision_frame_count": 0,
+  "first_collision_frame": null
+}

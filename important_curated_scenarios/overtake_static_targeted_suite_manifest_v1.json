@@ -1,0 +1,70 @@
+{
+  "schema": "important_curated_overtake_static_targeted_manifest_v1",
+  "suite_id": "important_curated_overtake_static_targeted_v1",
+  "fps": 20,
+  "duration_s": 30.0,
+  "scenario_count": 2,
+  "expected_outcome_counts": {
+    "collision_free": 2,
+    "collision_required": 0
+  },
+  "models": [
+    "tcp",
+    "neat"
+  ],
+  "conditions": [
+    "carla",
+    "he"
+  ],
+  "route_csv": "driving_models/common/outputs/town10_spawn10_to45_route_v1/route.csv",
+  "cases": [
+    {
+      "scenario_id": "static_left_tesla_overtake_clear_long600",
+      "category": "static_left_overtake_renderer_acceptance",
+      "metric_actor_id": "static_left_tesla",
+      "event_start_s": 0.0,
+      "event_source_start_s": 0.0,
+      "trigger_route_progress_m": null,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 30.0,
+      "fps": 20,
+      "weather_preset": "ClearNoon",
+      "asset_keys": [
+        "vehicle.tesla.model3"
+      ],
+      "actor_ids": [
+        "static_left_tesla"
+      ],
+      "semantic": "semantic/static_left_tesla_overtake_clear_long600.semantic_v2.json",
+      "resolved": "../important_curated_scenarios/resolved/static_left_tesla_overtake_clear_long600.resolved_v2.json",
+      "resolved_sha256": "1fb518dda5871f92fa600171375502d00e4d0d5911d4ed173159c0a541e89af8",
+      "environment": "../important_curated_scenarios/environment/static_left_tesla_overtake_clear_long600.environment_v1.json",
+      "status": "renderer_v2_visual_accepted"
+    },
+    {
+      "scenario_id": "moving_left_tesla_overtakes_static_ego_200",
+      "category": "moving_left_overtake_static_ego_renderer_acceptance",
+      "metric_actor_id": "left_tesla",
+      "event_start_s": 0.0,
+      "event_source_start_s": 0.0,
+      "trigger_route_progress_m": null,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 10.0,
+      "fps": 20,
+      "weather_preset": "ClearNoon",
+      "asset_keys": [
+        "vehicle.tesla.model3"
+      ],
+      "actor_ids": [
+        "left_tesla"
+      ],
+      "semantic": "semantic/moving_left_tesla_overtakes_static_ego_200.semantic_v2.json",
+      "resolved": "../important_curated_scenarios/resolved/moving_left_tesla_overtakes_static_ego_200.resolved_v2.json",
+      "resolved_sha256": "e2b83aaecf7529796d10ab5a1e20482b9bda7f8ec5adab55e88204c72d7e0210",
+      "environment": "../important_curated_scenarios/environment/moving_left_tesla_overtakes_static_ego_200.environment_v1.json",
+      "status": "renderer_v2_visual_accepted"
+    }
+  ]
+}

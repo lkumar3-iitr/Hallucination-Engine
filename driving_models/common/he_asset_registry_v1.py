@@ -105,6 +105,11 @@ class AssetPhysicalBBox:
     extent_y_m: float
     extent_z_m: float
 
+    local_center_x_m: float
+    local_center_y_m: float
+    local_center_z_m: float
+    local_bottom_z_m: float
+
     length_m: float
     width_m: float
     height_m: float
@@ -134,6 +139,11 @@ class HEAssetDefinition:
     asset_dir: Path
 
     view_matrix_csv: Path
+
+    close_view_matrix_csvs: Dict[
+        str,
+        Path,
+    ]
 
     asset_metadata_json: Optional[
         Path
@@ -253,6 +263,12 @@ class HEAssetDefinition:
                     self.view_matrix_csv
                 ),
 
+            "close_view_matrix_csvs": {
+                side: str(path)
+                for side, path
+                in self.close_view_matrix_csvs.items()
+            },
+
             "view_count":
                 self.view_count,
 
@@ -308,6 +324,14 @@ class HEAssetDefinition:
                             self.physical_bbox.extent_y_m,
                         "extent_z_m":
                             self.physical_bbox.extent_z_m,
+                        "local_center_x_m":
+                            self.physical_bbox.local_center_x_m,
+                        "local_center_y_m":
+                            self.physical_bbox.local_center_y_m,
+                        "local_center_z_m":
+                            self.physical_bbox.local_center_z_m,
+                        "local_bottom_z_m":
+                            self.physical_bbox.local_bottom_z_m,
                         "length_m":
                             self.physical_bbox.length_m,
                         "width_m":
@@ -547,6 +571,10 @@ def _parse_physical_bbox_from_metadata(
         "extent_x_m",
         "extent_y_m",
         "extent_z_m",
+        "local_center_x_m",
+        "local_center_y_m",
+        "local_center_z_m",
+        "local_bottom_z_m",
         "length_m",
         "width_m",
         "height_m",
@@ -570,6 +598,18 @@ def _parse_physical_bbox_from_metadata(
         ),
         extent_z_m=float(
             physical_bbox["extent_z_m"]
+        ),
+        local_center_x_m=float(
+            physical_bbox["local_center_x_m"]
+        ),
+        local_center_y_m=float(
+            physical_bbox["local_center_y_m"]
+        ),
+        local_center_z_m=float(
+            physical_bbox["local_center_z_m"]
+        ),
+        local_bottom_z_m=float(
+            physical_bbox["local_bottom_z_m"]
         ),
         length_m=float(
             physical_bbox["length_m"]
@@ -844,6 +884,35 @@ class HEAssetRegistry:
                 f"{view_matrix_csv}"
             )
 
+        close_view_matrix_csvs = {}
+        close_banks = entry.get(
+            "close_banks",
+            {},
+        )
+        if close_banks is None:
+            close_banks = {}
+        if not isinstance(close_banks, dict):
+            raise ValueError(
+                f"{key}: close_banks must be an object."
+            )
+        for side, close_folder in close_banks.items():
+            side_key = _clean_string(side).lower()
+            folder_text = _clean_string(close_folder)
+            if not side_key or not folder_text:
+                continue
+            close_dir = (
+                self.asset_root
+                /
+                folder_text
+            ).resolve()
+            close_csv = close_dir / "view_matrix.csv"
+            if not close_csv.exists():
+                raise FileNotFoundError(
+                    f"{key}: missing close-bank view_matrix.csv "
+                    f"for {side_key}:\n{close_csv}"
+                )
+            close_view_matrix_csvs[side_key] = close_csv
+
         # ----------------------------------------------------
         # Read production view matrix
         # ----------------------------------------------------
@@ -975,6 +1044,9 @@ class HEAssetRegistry:
 
             view_matrix_csv=
                 view_matrix_csv,
+
+            close_view_matrix_csvs=
+                close_view_matrix_csvs,
 
             asset_metadata_json=(
                 metadata_path

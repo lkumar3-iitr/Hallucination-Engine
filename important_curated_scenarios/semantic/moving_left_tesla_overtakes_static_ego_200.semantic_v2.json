@@ -1,0 +1,44 @@
+{
+  "scenario_id": "moving_left_tesla_overtakes_static_ego_200",
+  "description": "Two-hundred-frame renderer acceptance scenario. The canonical ego remains stationary while a parallel Tesla in the left adjacent lane travels forward at 6 m/s and overtakes it completely.",
+  "duration_s": 10.0,
+  "fps": 20,
+  "seed": 20260904,
+  "lane_width_m": 3.5,
+  "ego_speed_mps": 0.0,
+  "actors": [
+    {
+      "actor_id": "left_tesla",
+      "actor_type": "vehicle",
+      "role": "adversary",
+      "asset_key": "vehicle.tesla.model3",
+      "dimensions_m": {
+        "length_m": 4.792,
+        "width_m": 2.163,
+        "height_m": 1.488
+      },
+      "longitudinal_offset_m": -20.0,
+      "spawn_time_s": 0.0,
+      "despawn_time_s": null,
+      "behavior": {
+        "initial_lane": "left_adjacent",
+        "initial_speed_mps": 6.0,
+        "steps": [
+          {"action": "cruise", "duration_s": 10.0, "speed_mps": 6.0}
+        ],
+        "end_behavior": "hold"
+      }
+    }
+  ],
+  "camera": {
+    "image_width": 1280,
+    "image_height": 720,
+    "fov_deg": 90.0,
+    "x_m": 1.5,
+    "y_m": 0.0,
+    "z_m": 1.6,
+    "pitch_deg": 0.0,
+    "yaw_deg": 0.0,
+    "roll_deg": 0.0
+  }
+}

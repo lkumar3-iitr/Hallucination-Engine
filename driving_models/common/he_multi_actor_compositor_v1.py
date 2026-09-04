@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import csv
 
 from dataclasses import dataclass
 
@@ -19,8 +20,11 @@ import numpy as np
 
 from he_camera_renderer import (
     SpriteCache,
+    alpha_composite_rgb,
+    apply_scene_depth_occlusion_to_sprite,
     load_view_matrix_sprite_bank,
     render_he_actor_view_matrix,
+    warp_view_matrix_sprite_to_box_subpixel,
 )
 
 
@@ -78,6 +82,8 @@ class ActorCameraState:
 
     he_view_matrix_csv: str
 
+    he_close_view_matrix_csvs: Dict[str, str]
+
 
 @dataclass
 class ActorRenderResult:
@@ -96,6 +102,8 @@ class ActorRenderResult:
     distance_euclidean_m: float
 
     he_view_matrix_csv: str
+
+    he_close_view_matrix_csvs: Dict[str, str]
 
     rendered: bool
     he_metadata: Dict[str, Any]
@@ -345,6 +353,18 @@ def actor_to_camera_state(
             "view_matrix_csv",
         )
     )
+    close_csvs = _read_attr(
+        actor,
+        "he_close_view_matrix_csvs",
+        default={},
+    )
+    if close_csvs is None:
+        close_csvs = {}
+    close_csvs = {
+        str(side): str(path)
+        for side, path
+        in dict(close_csvs).items()
+    }
 
     return ActorCameraState(
         actor_id=actor_id,
@@ -369,6 +389,8 @@ def actor_to_camera_state(
         physical_height_m=dims["height_m"],
 
         he_view_matrix_csv=he_view_matrix_csv,
+
+        he_close_view_matrix_csvs=close_csvs,
     )
 
 
@@ -384,17 +406,25 @@ class HEMultiActorCompositorV1:
       - use actor-specific HE banks
       - sort actors far -> near
       - sequentially render into one RGB frame
-
-    Not yet included:
-      - scene-depth occlusion
-      - per-pixel actor depth compositing
+      - apply CARLA scene-depth occlusion to every actor sprite
     """
+
+    fallback_far_geometry_mode = "proxy"
+    centered_close_geometry_mode = "proxy"
+    centered_close_projection_mode = "center_depth_billboard"
+    center_depth_alpha_bbox_anchor = False
+    close_inner_margin_cells = 0.5
+    close_outer_margin_cells = 0.5
+    close_inner_min_bbox_clearance_m = None
 
     def __init__(
         self,
         distance_selection_mode="linear",
         bottom_y_offset_px=0.0,
         min_forward_distance_m=0.1,
+        silhouette_scale=1.0,
+        warp_scale_mode="independent",
+        viewpoint_lateral_sign=1.0,
     ):
         self.distance_selection_mode = str(
             distance_selection_mode
@@ -407,6 +437,9 @@ class HEMultiActorCompositorV1:
         self.min_forward_distance_m = float(
             min_forward_distance_m
         )
+        self.silhouette_scale = float(silhouette_scale)
+        self.warp_scale_mode = str(warp_scale_mode)
+        self.viewpoint_lateral_sign = float(viewpoint_lateral_sign)
 
         self.sprite_cache = SpriteCache()
 
@@ -416,6 +449,11 @@ class HEMultiActorCompositorV1:
         ] = {}
 
         self._sprite_bank_cache: Dict[
+            str,
+            Dict[str, Any],
+        ] = {}
+
+        self._close_bank_cache: Dict[
             str,
             Dict[str, Any],
         ] = {}
@@ -451,6 +489,12 @@ class HEMultiActorCompositorV1:
 
                 "distance_selection_mode":
                     self.distance_selection_mode,
+
+                "warp_scale_mode":
+                    self.warp_scale_mode,
+
+                "viewpoint_lateral_sign":
+                    self.viewpoint_lateral_sign,
             }
 
         return self._sprite_bank_cache[key]
@@ -477,6 +521,674 @@ class HEMultiActorCompositorV1:
             )
 
         return self._view_matrix_cache[key]
+
+    def _get_close_bank_for_csv(
+        self,
+        view_matrix_csv,
+    ):
+        key = str(
+            Path(view_matrix_csv).resolve()
+        )
+        if key not in self._close_bank_cache:
+            path = Path(key)
+            with path.open("r", encoding="utf-8", newline="") as stream:
+                rows = list(csv.DictReader(stream))
+            if not rows:
+                raise ValueError(
+                    f"Empty close Cartesian bank: {path}"
+                )
+            def close_key(row):
+                return (
+                    round(float(row["close_forward_m"]), 6),
+                    round(float(row["close_right_m"]), 6),
+                    round(float(row["close_relative_yaw_deg"]) % 360.0, 6),
+                )
+            self._close_bank_cache[key] = {
+                "csv": path,
+                "root": path.parent,
+                "rows": rows,
+                "forward_values": sorted({
+                    float(row["close_forward_m"])
+                    for row in rows
+                }),
+                "right_values": sorted({
+                    float(row["close_right_m"])
+                    for row in rows
+                }),
+                "up_values": sorted({
+                    float(row["close_target_up_m"])
+                    for row in rows
+                }),
+                "yaw_values": sorted({
+                    float(row["close_relative_yaw_deg"]) % 360.0
+                    for row in rows
+                }),
+                "index": {
+                    close_key(row): row
+                    for row in rows
+                },
+            }
+        return self._close_bank_cache[key]
+
+    @staticmethod
+    def _close_row_path(
+        bank,
+        row,
+    ) -> Path:
+        rel = row.get(
+            "rgba_relpath",
+            "",
+        )
+        if rel:
+            return (bank["root"] / rel).resolve()
+        return (bank["root"] / "rgba" / Path(row["rgba_path"]).name).resolve()
+
+    @staticmethod
+    def _angle_error_deg(
+        first,
+        second,
+    ) -> float:
+        return abs(
+            (
+                float(first)
+                -
+                float(second)
+                +
+                180.0
+            )
+            %
+            360.0
+            -
+            180.0
+        )
+
+    @staticmethod
+    def _bracket(values, query):
+        ordered = sorted(float(value) for value in values)
+        if query <= ordered[0]:
+            return ordered[0], ordered[0], 0.0
+        if query >= ordered[-1]:
+            return ordered[-1], ordered[-1], 0.0
+        for lower, upper in zip(ordered, ordered[1:]):
+            if lower <= query <= upper:
+                weight = (float(query) - lower) / (upper - lower)
+                return lower, upper, weight
+        raise RuntimeError("Could not bracket Cartesian close-bank query")
+
+    def _select_close_bank(
+        self,
+        state: ActorCameraState,
+        actor_tf,
+        camera_tf,
+        view_matrix,
+    ):
+        if not state.he_close_view_matrix_csvs:
+            return None
+
+        physical_bbox = view_matrix.get("physical_bbox") or {}
+        local_bbox_center = np.asarray([
+            float(physical_bbox.get("local_center_x_m", 0.0)),
+            float(physical_bbox.get("local_center_y_m", 0.0)),
+            float(physical_bbox.get("local_center_z_m", 0.0)),
+            1.0,
+        ], dtype=np.float64)
+        actor_to_world = np.asarray(actor_tf.get_matrix(), dtype=np.float64)
+        world_to_camera = np.asarray(
+            camera_tf.get_inverse_matrix(),
+            dtype=np.float64,
+        )
+        camera_center = world_to_camera @ actor_to_world @ local_bbox_center
+        forward_m = float(camera_center[0])
+        right_m = float(camera_center[1])
+        up_m = float(camera_center[2])
+
+        # Close banks are generated and indexed from the physical bounding-box
+        # center, which can lie on the opposite side of the camera centerline
+        # from the actor origin during an oblique cut-in.  Use that same point
+        # for side selection as well as for the Cartesian lookup.
+        side = "right" if right_m > 0.0 else "left"
+        csv_path = state.he_close_view_matrix_csvs.get(side)
+        if not csv_path:
+            return None
+
+        bank = self._get_close_bank_for_csv(csv_path)
+
+        forward_min = min(bank["forward_values"])
+        forward_max = max(bank["forward_values"])
+        right_min = min(bank["right_values"])
+        right_max = max(bank["right_values"])
+        up_min = min(bank["up_values"])
+        up_max = max(bank["up_values"])
+
+        right_steps = [
+            upper - lower
+            for lower, upper in zip(
+                bank["right_values"],
+                bank["right_values"][1:],
+            )
+        ]
+        right_step = (
+            min(right_steps)
+            if right_steps
+            else 0.0
+        )
+        inner_margin = self.close_inner_margin_cells * right_step
+        outer_margin = self.close_outer_margin_cells * right_step
+        if side == "right":
+            right_query_min = right_min - inner_margin
+            right_query_max = right_max + outer_margin
+        else:
+            right_query_min = right_min - outer_margin
+            right_query_max = right_max + inner_margin
+        if self.close_inner_min_bbox_clearance_m is not None:
+            minimum_abs_right = (
+                abs(float(physical_bbox.get("extent_y_m", 0.0)))
+                + float(self.close_inner_min_bbox_clearance_m)
+            )
+            if side == "right":
+                right_query_min = max(right_query_min, minimum_abs_right)
+            else:
+                right_query_max = min(right_query_max, -minimum_abs_right)
+
+        if not (
+            forward_min <= forward_m <= forward_max
+            and
+            right_query_min <= right_m <= right_query_max
+        ):
+            return None
+
+        bank_up_m = min(
+            bank["up_values"],
+            key=lambda value: abs(float(value) - up_m),
+        )
+        query_elevation_deg = math.degrees(math.atan2(up_m, forward_m))
+        bank_elevation_deg = math.degrees(
+            math.atan2(float(bank_up_m), forward_m)
+        )
+        if abs(query_elevation_deg - bank_elevation_deg) > 10.0:
+            return None
+
+        selected_yaw = min(
+            bank["yaw_values"],
+            key=lambda value: self._angle_error_deg(value, state.rel_yaw_deg),
+        )
+        forward_lower, forward_upper, forward_weight = self._bracket(
+            bank["forward_values"], forward_m
+        )
+        right_lower, right_upper, right_weight = self._bracket(
+            bank["right_values"], right_m
+        )
+        interpolation_rows = []
+        interpolation_keys = {
+            (
+                round(selected_forward, 6),
+                round(selected_right, 6),
+                round(selected_yaw % 360.0, 6),
+            )
+            for selected_forward in {forward_lower, forward_upper}
+            for selected_right in {right_lower, right_upper}
+        }
+        for key in interpolation_keys:
+            candidate = bank["index"].get(key)
+            if candidate is not None:
+                interpolation_rows.append(candidate)
+        # Some edge poses are intentionally absent because the actor is only
+        # partially projectable in the capture viewport. Renormalize the
+        # available interpolation weights below instead of discarding a useful
+        # close view or extrapolating beyond the sampled half-cell.
+        if not interpolation_rows:
+            return None
+        row = min(
+            interpolation_rows,
+            key=lambda candidate: (
+                (float(candidate["close_forward_m"]) - forward_m) ** 2
+                + (float(candidate["close_right_m"]) - right_m) ** 2
+            ),
+        )
+
+        return {
+            "bank": bank,
+            "row": row,
+            "side": side,
+            "eligibility": {
+                "forward_min_m": float(forward_min),
+                "forward_max_m": float(forward_max),
+                "right_min_m": float(right_query_min),
+                "right_max_m": float(right_query_max),
+            },
+            "interpolation": {
+                "rows": interpolation_rows,
+                "forward_lower": forward_lower,
+                "forward_upper": forward_upper,
+                "forward_weight": forward_weight,
+                "right_lower": right_lower,
+                "right_upper": right_upper,
+                "right_weight": right_weight,
+                "selected_yaw": selected_yaw,
+            },
+            "query": {
+                "forward_m": forward_m,
+                "right_m": right_m,
+                "up_m": up_m,
+                "relative_yaw_deg": float(state.rel_yaw_deg),
+            },
+        }
+
+    def _close_selection_diagnostic(
+        self,
+        state: ActorCameraState,
+        actor_tf,
+        camera_tf,
+        view_matrix,
+    ):
+        if not state.he_close_view_matrix_csvs:
+            return {
+                "active": False,
+                "reason": "no_close_banks_for_actor",
+            }
+
+        physical_bbox = view_matrix.get("physical_bbox") or {}
+        local_bbox_center = np.asarray([
+            float(physical_bbox.get("local_center_x_m", 0.0)),
+            float(physical_bbox.get("local_center_y_m", 0.0)),
+            float(physical_bbox.get("local_center_z_m", 0.0)),
+            1.0,
+        ], dtype=np.float64)
+        camera_center = (
+            np.asarray(camera_tf.get_inverse_matrix(), dtype=np.float64)
+            @ np.asarray(actor_tf.get_matrix(), dtype=np.float64)
+            @ local_bbox_center
+        )
+        forward_m = float(camera_center[0])
+        right_m = float(camera_center[1])
+        up_m = float(camera_center[2])
+
+        side = "right" if right_m > 0.0 else "left"
+        csv_path = state.he_close_view_matrix_csvs.get(side)
+        if not csv_path:
+            return {
+                "active": False,
+                "reason": f"missing_{side}_close_bank",
+                "side": side,
+                "available_sides": sorted(
+                    state.he_close_view_matrix_csvs
+                ),
+            }
+
+        bank = self._get_close_bank_for_csv(csv_path)
+
+        forward_min = min(bank["forward_values"])
+        forward_max = max(bank["forward_values"])
+        right_min = min(bank["right_values"])
+        right_max = max(bank["right_values"])
+        up_min = min(bank["up_values"])
+        up_max = max(bank["up_values"])
+
+        right_steps = [
+            upper - lower
+            for lower, upper in zip(
+                bank["right_values"],
+                bank["right_values"][1:],
+            )
+        ]
+        right_step = (
+            min(right_steps)
+            if right_steps
+            else 0.0
+        )
+        inner_margin = self.close_inner_margin_cells * right_step
+        outer_margin = self.close_outer_margin_cells * right_step
+        if side == "right":
+            right_query_min = right_min - inner_margin
+            right_query_max = right_max + outer_margin
+        else:
+            right_query_min = right_min - outer_margin
+            right_query_max = right_max + inner_margin
+        if self.close_inner_min_bbox_clearance_m is not None:
+            minimum_abs_right = (
+                abs(float(physical_bbox.get("extent_y_m", 0.0)))
+                + float(self.close_inner_min_bbox_clearance_m)
+            )
+            if side == "right":
+                right_query_min = max(right_query_min, minimum_abs_right)
+            else:
+                right_query_max = min(right_query_max, -minimum_abs_right)
+
+        reasons = []
+        if not forward_min <= forward_m <= forward_max:
+            reasons.append("forward_outside_close_bank")
+        if not right_query_min <= right_m <= right_query_max:
+            reasons.append("right_outside_close_bank")
+        if forward_m > 0.0:
+            bank_up_m = min(
+                bank["up_values"],
+                key=lambda value: abs(float(value) - up_m),
+            )
+            elevation_delta_deg = abs(
+                math.degrees(math.atan2(up_m, forward_m))
+                -
+                math.degrees(math.atan2(float(bank_up_m), forward_m))
+            )
+            if elevation_delta_deg > 10.0:
+                reasons.append("elevation_outside_close_bank")
+        else:
+            elevation_delta_deg = None
+
+        return {
+            "active": False,
+            "reason": ",".join(reasons) or "eligible_but_not_selected",
+            "side": side,
+            "query": {
+                "forward_m": forward_m,
+                "right_m": right_m,
+                "up_m": up_m,
+                "relative_yaw_deg": float(state.rel_yaw_deg),
+            },
+            "ranges": {
+                "forward_m": [
+                    forward_min,
+                    forward_max,
+                ],
+                "right_m": [
+                    right_query_min,
+                    right_query_max,
+                ],
+                "up_m": [
+                    up_min,
+                    up_max,
+                ],
+            },
+            "elevation_delta_deg": elevation_delta_deg,
+        }
+
+    def _render_close_cartesian(
+        self,
+        base_rgb,
+        state: ActorCameraState,
+        actor_tf,
+        camera_tf,
+        view_matrix,
+        width,
+        height,
+        fov,
+        scene_depth_m=None,
+        fallback_meta=None,
+    ):
+        selection = self._select_close_bank(
+            state,
+            actor_tf,
+            camera_tf,
+            view_matrix,
+        )
+        if selection is None:
+            return None
+
+        bank = selection["bank"]
+        row = selection["row"]
+        sprite_path = self._close_row_path(
+            bank,
+            row,
+        )
+        if not sprite_path.exists():
+            return None
+
+        sprite_rgba = self.sprite_cache.load_rgba(sprite_path)
+        capture_width = float(row["image_width_px"])
+        capture_height = float(row["image_height_px"])
+        capture_fx = float(row["camera_fx_px"])
+        runtime_fx = float(width) / (
+            2.0 * math.tan(math.radians(float(fov)) / 2.0)
+        )
+        query = selection["query"]
+        query_forward = max(float(query["forward_m"]), 1e-6)
+        query_center_x = (
+            float(width) / 2.0
+            + runtime_fx * float(query["right_m"]) / query_forward
+        )
+        query_center_y = (
+            float(height) / 2.0
+            - runtime_fx * float(query["up_m"]) / query_forward
+        )
+
+        def runtime_visible_box(candidate):
+            selected_forward = max(
+                float(candidate["close_forward_m"]), 1e-6
+            )
+            candidate_capture_fx = float(candidate["camera_fx_px"])
+            scale = (
+                runtime_fx / candidate_capture_fx
+                * selected_forward / query_forward
+            )
+            source_center_x = (
+                float(candidate["camera_cx_px"])
+                + candidate_capture_fx
+                * float(candidate["close_right_m"])
+                / selected_forward
+            )
+            source_center_y = (
+                float(candidate["camera_cy_px"])
+                - float(candidate["camera_fy_px"])
+                * float(candidate["close_target_up_m"])
+                / selected_forward
+            )
+            return {
+                "x1": query_center_x + (
+                    float(candidate["visible_x1_full_px"]) - source_center_x
+                ) * scale,
+                "x2": query_center_x + (
+                    float(candidate["visible_x2_full_px"]) - source_center_x
+                ) * scale,
+                "y1": query_center_y + (
+                    float(candidate["visible_y1_full_px"]) - source_center_y
+                ) * scale,
+                "y2": query_center_y + (
+                    float(candidate["visible_y2_full_px"]) - source_center_y
+                ) * scale,
+                "scale": scale,
+            }
+
+        interpolation = selection["interpolation"]
+        weighted_boxes = []
+        for candidate in interpolation["rows"]:
+            candidate_forward = float(candidate["close_forward_m"])
+            candidate_right = float(candidate["close_right_m"])
+            if interpolation["forward_lower"] == interpolation["forward_upper"]:
+                forward_factor = 1.0
+            elif candidate_forward == interpolation["forward_lower"]:
+                forward_factor = 1.0 - interpolation["forward_weight"]
+            else:
+                forward_factor = interpolation["forward_weight"]
+            if interpolation["right_lower"] == interpolation["right_upper"]:
+                right_factor = 1.0
+            elif candidate_right == interpolation["right_lower"]:
+                right_factor = 1.0 - interpolation["right_weight"]
+            else:
+                right_factor = interpolation["right_weight"]
+            weighted_boxes.append((
+                forward_factor * right_factor,
+                runtime_visible_box(candidate),
+            ))
+        total_weight = sum(weight for weight, unused in weighted_boxes)
+        if total_weight <= 0.0:
+            return None
+        target = {
+            name: sum(weight * box[name] for weight, box in weighted_boxes)
+            / total_weight
+            for name in ("x1", "x2", "y1", "y2")
+        }
+        target_x1 = target["x1"]
+        target_x2 = target["x2"]
+        target_y1 = target["y1"]
+        target_y2 = target["y2"]
+        projection_scale = runtime_visible_box(row)["scale"]
+
+        forward_max = max(bank["forward_values"])
+        right_min = min(bank["right_values"])
+        right_max = max(bank["right_values"])
+        forward_overflow = max(float(query["forward_m"]) - forward_max, 0.0)
+        right_overflow = max(
+            right_min - float(query["right_m"]),
+            float(query["right_m"]) - right_max,
+            0.0,
+        )
+        close_geometry_weight_linear = max(
+            0.0,
+            min(
+                1.0,
+                1.0 - forward_overflow / 1.5,
+                1.0 - right_overflow / 1.0,
+            ),
+        )
+        close_geometry_weight = (
+            close_geometry_weight_linear
+            * close_geometry_weight_linear
+            * (3.0 - 2.0 * close_geometry_weight_linear)
+        )
+        fallback_width = None if fallback_meta is None else fallback_meta.get(
+            "target_box_width_px"
+        )
+        fallback_height = None if fallback_meta is None else fallback_meta.get(
+            "target_box_height_px"
+        )
+        if (
+            close_geometry_weight < 1.0
+            and fallback_width not in (None, "")
+            and fallback_height not in (None, "")
+        ):
+            close_width = target_x2 - target_x1 + 1.0
+            close_height = target_y2 - target_y1 + 1.0
+            blended_width = (
+                close_geometry_weight * close_width
+                + (1.0 - close_geometry_weight) * float(fallback_width)
+            )
+            blended_height = (
+                close_geometry_weight * close_height
+                + (1.0 - close_geometry_weight) * float(fallback_height)
+            )
+            center_x = (target_x1 + target_x2) / 2.0
+            bottom_y = target_y2
+            target_x1 = center_x - (blended_width - 1.0) / 2.0
+            target_x2 = center_x + (blended_width - 1.0) / 2.0
+            target_y1 = bottom_y - (blended_height - 1.0)
+
+        alpha_y, alpha_x = np.where(sprite_rgba[:, :, 3] > 10)
+        if len(alpha_x) == 0 or len(alpha_y) == 0:
+            return None
+        source_anchor_x = (float(alpha_x.min()) + float(alpha_x.max())) / 2.0
+        source_anchor_y = float(alpha_y.max())
+        warped_rgba, resize_info = warp_view_matrix_sprite_to_box_subpixel(
+            sprite_rgba=sprite_rgba,
+            frame_w=int(width),
+            frame_h=int(height),
+            target_cx=(target_x1 + target_x2) / 2.0,
+            target_bottom_y=target_y2,
+            target_box_w=max(1.0, target_x2 - target_x1 + 1.0),
+            target_box_h=max(1.0, target_y2 - target_y1 + 1.0),
+            anchor_x=source_anchor_x,
+            anchor_y=source_anchor_y,
+            alpha_threshold=10,
+        )
+        if resize_info.get("fully_outside_frame", False):
+            return None
+        paste = resize_info["paste"]
+        paste_x = int(paste["x1"])
+        paste_y = int(paste["y1"])
+        nearest_depth = max(
+            0.05,
+            query_forward
+            + float(row["nearest_bbox_depth_m"])
+            - float(row["actor_depth_m"]),
+        )
+        warped_rgba, occlusion_meta = apply_scene_depth_occlusion_to_sprite(
+            sprite_rgba=warped_rgba,
+            scene_depth_m=scene_depth_m,
+            paste_x1=paste_x,
+            paste_y1=paste_y,
+            actor_nearest_depth_m=nearest_depth,
+        )
+        output, full_mask = alpha_composite_rgb(
+            frame_rgb=base_rgb.copy(),
+            sprite_rgba=warped_rgba,
+            x1=paste_x,
+            y1=paste_y,
+            global_alpha=1.0,
+        )
+        rendered = bool(np.any(full_mask > 0))
+        requested_view_angle = (
+            math.degrees(math.atan2(
+                float(query["right_m"]),
+                float(query["forward_m"]),
+            ))
+            - float(query["relative_yaw_deg"])
+            + 180.0
+        ) % 360.0
+        selected_view_angle = (
+            math.degrees(math.atan2(
+                float(row["close_right_m"]),
+                float(row["close_forward_m"]),
+            ))
+            - float(row["close_relative_yaw_deg"])
+            + 180.0
+        ) % 360.0
+        return output, {
+            "rendered": rendered,
+            "reason": "" if rendered else "close_cartesian_outside_viewport",
+            "sprite_mode": "cartesian_close",
+            "selected_angle": float(selected_view_angle),
+            "viewpoint_angle_deg": float(requested_view_angle),
+            "selected_distance_m": float(row["bbox_center_distance_m"]),
+            "query_distance_m": float(selection["query"]["forward_m"]),
+            "selected_elevation_deg": float(row["elevation_deg"]),
+            "query_elevation_deg": "",
+            "sprite_path": str(sprite_path),
+            "sprite_width": int(warped_rgba.shape[1]),
+            "sprite_height": int(warped_rgba.shape[0]),
+            "paste_x1": paste_x,
+            "paste_y1": paste_y,
+            "anchor_mode": "cartesian_close_bbox_center_reprojection",
+            "target_box_width_px": float(target_x2 - target_x1 + 1.0),
+            "target_box_height_px": float(target_y2 - target_y1 + 1.0),
+            "warp_scale_mode": "cartesian_close_focal_height_adapted",
+            "resize_info": resize_info,
+            "scene_occlusion": occlusion_meta,
+            "cartesian_close": {
+                "active": True,
+                "side": selection["side"],
+                "query": selection["query"],
+                "selected": {
+                    "forward_m": float(row["close_forward_m"]),
+                    "right_m": float(row["close_right_m"]),
+                    "up_m": float(row["close_target_up_m"]),
+                    "relative_yaw_deg": float(row["close_relative_yaw_deg"]),
+                },
+                "runtime_projection": {
+                    "runtime_fx_px": runtime_fx,
+                    "capture_fx_px": capture_fx,
+                    "projection_scale": projection_scale,
+                    "target_visible_box": {
+                        "x1": target_x1,
+                        "y1": target_y1,
+                        "x2": target_x2,
+                        "y2": target_y2,
+                    },
+                    "interpolation": {
+                        "forward_lower": interpolation["forward_lower"],
+                        "forward_upper": interpolation["forward_upper"],
+                        "forward_weight": interpolation["forward_weight"],
+                        "right_lower": interpolation["right_lower"],
+                        "right_upper": interpolation["right_upper"],
+                        "right_weight": interpolation["right_weight"],
+                        "selected_yaw": interpolation["selected_yaw"],
+                        "close_geometry_weight": close_geometry_weight,
+                        "close_geometry_weight_linear": (
+                            close_geometry_weight_linear
+                        ),
+                    },
+                },
+                "qa_pass": row.get("qa_pass") == "True",
+                "qa_flags": row.get("qa_flags", ""),
+            },
+        }
 
     # --------------------------------------------------------
     # Candidate preparation
@@ -527,6 +1239,7 @@ class HEMultiActorCompositorV1:
         width,
         height,
         fov,
+        scene_depth_m=None,
     ):
         if base_rgb is None:
             raise ValueError(
@@ -577,7 +1290,14 @@ class HEMultiActorCompositorV1:
                 camera_height_m=camera_height_m,
             )
 
-            rgb, he_meta = render_he_actor_view_matrix(
+            # Compute the 4320 result during the Cartesian overlap as the
+            # handoff geometry reference. Only the selected result is exposed;
+            # this does not composite two actor sprites into the final frame.
+            centered_close_4320 = (
+                float(state.rel_z_m) <= 7.0
+                and abs(float(state.rel_x_m)) < 3.0
+            )
+            fallback_rgb, fallback_meta = render_he_actor_view_matrix(
                 base_rgb=rgb,
                 actor_tf=actor_tf,
                 camera_tf=camera_tf,
@@ -588,10 +1308,72 @@ class HEMultiActorCompositorV1:
                 width=int(width),
                 height=int(height),
                 fov=float(fov),
-                bottom_y_offset_px=float(
-                    self.bottom_y_offset_px
+                bottom_y_offset_px=float(self.bottom_y_offset_px),
+                projection_mode=(
+                    self.centered_close_projection_mode
+                    if centered_close_4320
+                    else "oriented_2p5d_support"
+                ),
+                geometry_mode=(
+                    self.centered_close_geometry_mode
+                    if centered_close_4320
+                    else self.fallback_far_geometry_mode
+                ),
+                scene_depth_m=scene_depth_m,
+                silhouette_scale=self.silhouette_scale,
+                warp_scale_mode=self.warp_scale_mode,
+                viewpoint_lateral_sign=self.viewpoint_lateral_sign,
+                center_depth_alpha_bbox_anchor=(
+                    self.center_depth_alpha_bbox_anchor
+                ),
+                camera_rotation_reprojection=bool(
+                    getattr(self, "camera_rotation_reprojection", False)
+                ),
+                camera_rotation_reprojection_min_width_fraction=float(
+                    getattr(
+                        self,
+                        "camera_rotation_reprojection_min_width_fraction",
+                        0.20,
+                    )
+                ),
+                camera_rotation_reprojection_min_bearing_deg=float(
+                    getattr(
+                        self,
+                        "camera_rotation_reprojection_min_bearing_deg",
+                        30.0,
+                    )
                 ),
             )
+            close_result = self._render_close_cartesian(
+                base_rgb=rgb,
+                state=state,
+                actor_tf=actor_tf,
+                camera_tf=camera_tf,
+                view_matrix=view_matrix,
+                width=int(width),
+                height=int(height),
+                fov=float(fov),
+                scene_depth_m=scene_depth_m,
+                fallback_meta=fallback_meta,
+            )
+
+            if close_result is not None:
+                rgb, he_meta = close_result
+            else:
+                rgb, he_meta = fallback_rgb, fallback_meta
+                he_meta["cartesian_close"] = (
+                    self._close_selection_diagnostic(
+                        state,
+                        actor_tf,
+                        camera_tf,
+                        view_matrix,
+                    )
+                )
+                he_meta["asset_selection_policy"] = {
+                    "source": "view_matrix_4320",
+                    "centered_close_4320": bool(centered_close_4320),
+                    "projection_mode": he_meta.get("projection_mode"),
+                }
 
             actor_results.append(
                 ActorRenderResult(
@@ -615,6 +1397,9 @@ class HEMultiActorCompositorV1:
 
                     he_view_matrix_csv=
                         state.he_view_matrix_csv,
+
+                    he_close_view_matrix_csvs=
+                        state.he_close_view_matrix_csvs,
 
                     rendered=bool(
                         he_meta.get(

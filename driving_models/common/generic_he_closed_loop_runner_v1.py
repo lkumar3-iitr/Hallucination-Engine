@@ -38,7 +38,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
+import queue
 import sys
 import importlib.util
 from pathlib import Path
@@ -83,20 +85,28 @@ from he_asset_registry_v1 import (
 from he_multi_actor_compositor_v1 import (
     HEMultiActorCompositorV1,
 )
+from he_multi_actor_compositor_v2 import (
+    HEMultiActorCompositorV2,
+)
 
 from scenario_execution_runtime_v1 import (
     ExecutionWorldOrigin,
     load_execution_runtime,
 )
 from route_progress_metrics_v1 import (
+    RoutePoint,
     RouteProjector,
     compute_route_pair_metrics,
     route_virtual_collision,
+)
+from oriented_box_metrics_v1 import (
+    nearest_actor_footprint_metrics,
 )
 
 from traffic_light_schedule_v1 import (
     TrafficLightScheduleExecutor,
 )
+from scenario_event_clock_v1 import RouteTriggeredEventClock
 
 # ============================================================
 # Model adapters
@@ -121,6 +131,63 @@ DEFAULT_OUTPUT_ROOT = (
     / "outputs"
     / "generic_he_closed_loop_v1"
 )
+
+
+def make_scene_depth_camera(world, ego, spec):
+    bp = world.get_blueprint_library().find("sensor.camera.depth")
+    bp.set_attribute("image_size_x", str(int(spec.width)))
+    bp.set_attribute("image_size_y", str(int(spec.height)))
+    bp.set_attribute("fov", str(float(spec.fov_deg)))
+    transform = carla.Transform(
+        carla.Location(x=spec.x_m, y=spec.y_m, z=spec.z_m),
+        carla.Rotation(
+            pitch=spec.pitch_deg,
+            yaw=spec.yaw_deg,
+            roll=spec.roll_deg,
+        ),
+    )
+    return world.spawn_actor(bp, transform, attach_to=ego)
+
+
+def read_exact_sensor_frame(sensor_queue, target_frame, name):
+    while True:
+        sample = sensor_queue.get(timeout=20.0)
+        frame = int(sample.frame)
+        if frame < int(target_frame):
+            continue
+        if frame > int(target_frame):
+            raise RuntimeError(
+                f"{name} skipped target frame {target_frame}; received {frame}."
+            )
+        return sample
+
+
+def carla_depth_image_to_m(depth_image):
+    bgra = np.frombuffer(depth_image.raw_data, dtype=np.uint8).reshape(
+        depth_image.height, depth_image.width, 4
+    )
+    blue = bgra[:, :, 0].astype(np.float32)
+    green = bgra[:, :, 1].astype(np.float32)
+    red = bgra[:, :, 2].astype(np.float32)
+    normalized = (red + 256.0 * green + 65536.0 * blue) / 16777215.0
+    return normalized * 1000.0
+
+
+def resolve_weather_preset(carla_module, preset_name):
+    if preset_name is None or str(preset_name).strip() == "":
+        return None
+    preset_name = str(preset_name).strip()
+    if not hasattr(carla_module.WeatherParameters, preset_name):
+        raise ValueError(f"Unknown CARLA weather preset: {preset_name}")
+    return getattr(carla_module.WeatherParameters, preset_name)
+
+
+def weather_preset_from_environment(path):
+    if path is None:
+        return None
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    weather = data.get("weather") or {}
+    return weather.get("preset")
 
 
 # ============================================================
@@ -555,6 +622,29 @@ def route_length(
     return total
 
 
+def route_projector_from_carla_route(route):
+    points = []
+    progress_m = 0.0
+    previous = None
+    for route_idx, item in enumerate(route):
+        location = item[0].transform.location
+        if previous is not None:
+            progress_m += math.hypot(
+                float(location.x) - float(previous.x),
+                float(location.y) - float(previous.y),
+            )
+        points.append(
+            RoutePoint(
+                route_idx=int(route_idx),
+                s_m=float(progress_m),
+                x=float(location.x),
+                y=float(location.y),
+            )
+        )
+        previous = location
+    return RouteProjector(points)
+
+
 def closest_route_index(
     route,
     location,
@@ -819,7 +909,7 @@ def execution_actor_to_carla_transform(
     if waypoint is not None:
         z = float(
             waypoint.transform.location.z
-        ) + 0.05
+        ) + float(state.ground_origin_offset_m)
 
         pitch = float(
             waypoint.transform.rotation.pitch
@@ -829,7 +919,7 @@ def execution_actor_to_carla_transform(
             waypoint.transform.rotation.roll
         )
     else:
-        z = float(state.world_z_m) + 0.05
+        z = float(state.world_z_m)
         pitch = 0.0
         roll = 0.0
 
@@ -896,6 +986,38 @@ def sync_carla_scenario_actors(
                 blueprint,
                 transform,
             )
+
+            if actor is None:
+                raised_transform = carla.Transform(
+                    carla.Location(
+                        x=transform.location.x,
+                        y=transform.location.y,
+                        z=transform.location.z + 0.5,
+                    ),
+                    transform.rotation,
+                )
+                actor = world.try_spawn_actor(
+                    blueprint,
+                    raised_transform,
+                )
+
+            if actor is None:
+                lane_aligned_transform = carla.Transform(
+                    carla.Location(
+                        x=transform.location.x,
+                        y=transform.location.y,
+                        z=transform.location.z + 1.0,
+                    ),
+                    carla.Rotation(
+                        pitch=transform.rotation.pitch,
+                        yaw=0.0,
+                        roll=transform.rotation.roll,
+                    ),
+                )
+                actor = world.try_spawn_actor(
+                    blueprint,
+                    lane_aligned_transform,
+                )
 
             if actor is None:
                 raise RuntimeError(
@@ -1151,6 +1273,22 @@ def create_adapter(
 # Main
 # ============================================================
 
+def scene_occlusion_summary(composite):
+    rows = [] if composite is None else composite.actor_results
+    metadata = [
+        row.he_metadata.get("scene_occlusion", {})
+        for row in rows
+    ]
+    used = [row for row in metadata if row.get("enabled")]
+    fractions = [float(row.get("occluded_fraction", 0.0)) for row in used]
+    return {
+        "depth_used": int(bool(used)),
+        "occluded_actor_count": sum(value > 0.0 for value in fractions),
+        "fully_occluded_actor_count": sum(value >= 0.999 for value in fractions),
+        "maximum_occluded_fraction": max(fractions, default=0.0),
+    }
+
+
 def main():
 
     parser = (
@@ -1178,6 +1316,16 @@ def main():
     parser.add_argument(
         "--device",
         default="cuda",
+    )
+
+    parser.add_argument(
+        "--ego-blueprint",
+        default=None,
+        help=(
+            "Optional CARLA ego blueprint override. By default, "
+            "the runner uses the vehicle associated with each "
+            "model's original evaluation stack."
+        ),
     )
 
     # TCP-specific optional paths.
@@ -1209,6 +1357,14 @@ def main():
             "for deterministic traffic-light schedules."
         ),
     )
+    parser.add_argument(
+        "--weather-preset",
+        default=None,
+        help=(
+            "Optional CARLA WeatherParameters preset, e.g. "
+            "ClearNoon or HardRainNoon. Overrides environment weather."
+        ),
+    )
 
     parser.add_argument(
         "--route-metrics-csv",
@@ -1237,6 +1393,24 @@ def main():
             "Scenario safety-event start time. Logged so "
             "response-time metrics can be calculated later."
         ),
+    )
+    parser.add_argument(
+        "--trigger-route-progress-m",
+        type=float,
+        default=None,
+        help="Start the authored event when ego reaches this route progress.",
+    )
+    parser.add_argument(
+        "--event-source-start-s",
+        type=float,
+        default=None,
+        help="Authored trajectory time corresponding to trigger-relative t=0.",
+    )
+    parser.add_argument(
+        "--pre-trigger-source-frame",
+        type=int,
+        default=None,
+        help="Optional authored staging frame held before the route trigger.",
     )
     parser.add_argument(
         "--resolved",
@@ -1270,11 +1444,48 @@ def main():
         ],
         default="linear",
     )
+    parser.add_argument(
+        "--he-renderer-version",
+        choices=["v1", "v2"],
+        default="v1",
+        help="HE compositor implementation. V1 remains the control/default.",
+    )
 
     parser.add_argument(
         "--he-bottom-y-offset-px",
         type=float,
         default=0.0,
+    )
+    parser.add_argument(
+        "--he-silhouette-scale",
+        type=float,
+        default=1.0,
+        help="Uniform HE silhouette scale around the physical support anchor.",
+    )
+    parser.add_argument(
+        "--he-warp-scale-mode",
+        choices=[
+            "independent",
+            "uniform_height_preserve_aspect",
+        ],
+        default="independent",
+        help=(
+            "View-matrix sprite warp scaling mode. The default preserves "
+            "existing independent X/Y scaling."
+        ),
+    )
+    parser.add_argument(
+        "--he-viewpoint-lateral-sign",
+        type=float,
+        choices=[
+            -1.0,
+            1.0,
+        ],
+        default=1.0,
+        help=(
+            "Sign applied to camera-right before querying the sprite-bank "
+            "viewpoint angle. Projection and metrics are unchanged."
+        ),
     )
 
     parser.add_argument(
@@ -1482,6 +1693,16 @@ def main():
         world.get_settings()
     )
 
+    weather_preset_name = (
+        args.weather_preset
+        or weather_preset_from_environment(args.environment_json)
+    )
+
+    weather = resolve_weather_preset(carla, weather_preset_name)
+    if weather is not None:
+        world.set_weather(weather)
+        print("[weather]", weather_preset_name)
+
     actors = []
     scenario_carla_actors = {}
     csv_fp = None
@@ -1617,13 +1838,21 @@ def main():
         # Ego
         # ====================================================
 
+        model_ego_blueprints = {
+            # The bundled TCP Leaderboard stack spawns
+            # vehicle.lincoln.mkz2017. CARLA 0.9.15 exposes the
+            # same vehicle under the blueprint name below.
+            "tcp": "vehicle.lincoln.mkz_2017",
+            "neat": "vehicle.tesla.model3",
+            "cilpp": "vehicle.lincoln.mkz_2017",
+            "aimmt": "vehicle.lincoln.mkz_2017",
+        }
+
         ego_blueprint = (
-            "vehicle.lincoln.mkz_2017"
-            if args.model in {
-                "cilpp",
-                "aimmt",
-            }
-            else "vehicle.tesla.model3"
+            args.ego_blueprint
+            or model_ego_blueprints[
+                args.model
+            ]
         )
 
         ego_bp = (
@@ -1692,6 +1921,23 @@ def main():
                 sensor_actors
             )
         )
+
+        # Scene depth is an HE compositor input, not a model input.
+        # Every depth camera is exactly co-located with its native RGB camera.
+        scene_depth_cameras = {}
+        scene_depth_queues = {}
+        if args.condition == "he":
+            for spec in adapter.camera_specs():
+                depth_camera = make_scene_depth_camera(world, ego, spec)
+                depth_queue = queue.Queue()
+                depth_camera.listen(depth_queue.put)
+                scene_depth_cameras[spec.name] = depth_camera
+                scene_depth_queues[spec.name] = depth_queue
+                actors.append(depth_camera)
+            print(
+                "[HE scene depth] synchronized cameras:",
+                ", ".join(sorted(scene_depth_cameras)),
+            )
 
         # ====================================================
         # Canonical ego initialization
@@ -1860,8 +2106,13 @@ def main():
         # HE compositor
         # ====================================================
 
+        compositor_class = (
+            HEMultiActorCompositorV2
+            if args.he_renderer_version == "v2"
+            else HEMultiActorCompositorV1
+        )
         compositor = (
-            HEMultiActorCompositorV1(
+            compositor_class(
                 distance_selection_mode=
                     args.distance_selection_mode,
 
@@ -1869,13 +2120,16 @@ def main():
                     float(
                         args.he_bottom_y_offset_px
                     ),
+                silhouette_scale=float(args.he_silhouette_scale),
+                warp_scale_mode=str(args.he_warp_scale_mode),
+                viewpoint_lateral_sign=float(args.he_viewpoint_lateral_sign),
             )
         )
         # ====================================================
         # Turn-aware benchmark metrics
         # ====================================================
 
-        route_projector = None
+        route_projector = route_projector_from_carla_route(route)
 
         route_metric_ego_segment = None
         route_metric_actor_segment = None
@@ -1923,6 +2177,31 @@ def main():
                 f"L={ego_length_m:.3f} "
                 f"W={ego_width_m:.3f}",
             )
+        else:
+            print(
+                "[route metrics] in-memory CARLA route",
+                f"length={route_projector.total_length_m:.2f} m",
+            )
+            print(
+                "[ego physical dimensions]",
+                f"L={ego_length_m:.3f} W={ego_width_m:.3f}",
+            )
+
+        event_source_start_s = (
+            args.event_start_s
+            if args.event_source_start_s is None
+            else args.event_source_start_s
+        )
+        event_source_frame = int(round(
+            float(event_source_start_s or 0.0) * fps
+        ))
+        event_clock = RouteTriggeredEventClock(
+            trigger_route_progress_m=args.trigger_route_progress_m,
+            event_source_frame=event_source_frame,
+            pre_trigger_source_frame=args.pre_trigger_source_frame,
+        )
+        actor_source_frame = event_clock.source_frame(start_frame)
+        event_route_segment = None
 
         # ====================================================
         # Deterministic environment schedule
@@ -1970,7 +2249,7 @@ def main():
                 carla_map=carla_map,
                 actor_by_id=scenario_carla_actors,
                 active_states=runtime.active_actors(
-                    start_frame
+                    actor_source_frame
                 ),
             )
         # ====================================================
@@ -1986,6 +2265,17 @@ def main():
                 current_frame
             )
         )
+        print("[HE renderer]", args.he_renderer_version)
+
+        scene_depth_by_camera = {}
+        if args.condition == "he":
+            for camera_name, depth_queue in scene_depth_queues.items():
+                depth_image = read_exact_sensor_frame(
+                    depth_queue, current_frame, f"HE {camera_name} depth"
+                )
+                scene_depth_by_camera[camera_name] = carla_depth_image_to_m(
+                    depth_image
+                )
 
         # ====================================================
         # Outputs
@@ -2115,18 +2405,28 @@ def main():
             "scenario_id",
             "model",
             "condition",
+            "weather_preset",
+            "ego_blueprint",
 
             "scenario_frame",
+            "actor_source_frame",
             "carla_frame",
             "t_s",
             "traffic_light_state",
             "event_start_s",
+            "trigger_route_progress_m",
+            "trigger_frame",
+            "trigger_relative_frame",
+            "trigger_relative_s",
+            "trigger_observed_progress_m",
 
             "ego_x",
             "ego_y",
             "ego_z",
             "ego_yaw",
             "ego_speed_mps",
+            "ego_acceleration_mps2",
+            "ego_jerk_mps3",
 
             "route_index",
             "route_deviation_m",
@@ -2143,6 +2443,10 @@ def main():
             "target_y",
 
             "active_actor_count",
+            "nearest_actor_id",
+            "nearest_actor_center_distance_m",
+            "nearest_actor_clearance_m",
+            "physical_overlap",
             "metric_actor_id",
             "metric_actor_speed_mps",
 
@@ -2172,10 +2476,23 @@ def main():
                 f"{camera_name}_rendered_count",
                 f"{camera_name}_rendered_ids",
                 f"{camera_name}_nearest_depth_m",
+                f"{camera_name}_scene_depth_used",
+                f"{camera_name}_occluded_actor_count",
+                f"{camera_name}_fully_occluded_actor_count",
+                f"{camera_name}_maximum_occluded_fraction",
 
                 f"{camera_name}_selected_angle",
                 f"{camera_name}_selected_distance_m",
                 f"{camera_name}_selected_elevation_deg",
+                f"{camera_name}_silhouette_scale",
+                f"{camera_name}_warp_scale_mode",
+                f"{camera_name}_viewpoint_lateral_sign",
+                f"{camera_name}_sprite_width_px",
+                f"{camera_name}_sprite_height_px",
+                f"{camera_name}_target_box_width_px",
+                f"{camera_name}_target_box_height_px",
+                f"{camera_name}_subpixel_scale_x",
+                f"{camera_name}_subpixel_scale_y",
 
                 f"{camera_name}_anchor_mode",
 
@@ -2217,6 +2534,8 @@ def main():
         completed_frames = 0
 
         max_brake = 0.0
+        previous_speed_mps = None
+        previous_acceleration_mps2 = None
 
         # ====================================================
         # Scenario loop
@@ -2266,7 +2585,7 @@ def main():
 
             active_actors = list(
                 runtime.active_actors(
-                    scenario_frame
+                    actor_source_frame
                 )
             )
 
@@ -2332,6 +2651,9 @@ def main():
                                 float(
                                     spec.fov_deg
                                 ),
+                            scene_depth_m=scene_depth_by_camera[
+                                camera_name
+                            ],
                         )
                     )
 
@@ -2612,6 +2934,33 @@ def main():
 
             metric_actor = None
 
+            footprint_metrics = nearest_actor_footprint_metrics(
+                ego_x_m=float(ego_loc.x),
+                ego_y_m=float(ego_loc.y),
+                ego_yaw_deg=float(ego_tf.rotation.yaw),
+                ego_length_m=ego_length_m,
+                ego_width_m=ego_width_m,
+                actors=active_actors,
+            )
+
+            if previous_speed_mps is None:
+                acceleration_mps2 = 0.0
+            else:
+                acceleration_mps2 = (
+                    float(speed_mps) - float(previous_speed_mps)
+                ) * float(fps)
+
+            if previous_acceleration_mps2 is None:
+                jerk_mps3 = 0.0
+            else:
+                jerk_mps3 = (
+                    float(acceleration_mps2)
+                    - float(previous_acceleration_mps2)
+                ) * float(fps)
+
+            previous_speed_mps = float(speed_mps)
+            previous_acceleration_mps2 = float(acceleration_mps2)
+
             if args.metric_actor_id is not None:
 
                 requested_actor_id = str(
@@ -2768,10 +3117,18 @@ def main():
                 "condition":
                     args.condition,
 
+                "weather_preset":
+                    weather_preset_name or "",
+
+                "ego_blueprint":
+                    ego_blueprint,
+
                 "scenario_frame":
                     int(
                         scenario_frame
                     ),
+
+                "actor_source_frame": int(actor_source_frame),
 
                 "carla_frame":
                     int(
@@ -2794,6 +3151,26 @@ def main():
                             args.event_start_s
                         )
                     ),
+                "trigger_route_progress_m": (
+                    "" if args.trigger_route_progress_m is None
+                    else float(args.trigger_route_progress_m)
+                ),
+                "trigger_frame": (
+                    "" if event_clock.trigger_frame is None
+                    else int(event_clock.trigger_frame)
+                ),
+                "trigger_relative_frame": (
+                    "" if event_clock.relative_frame(scenario_frame) is None
+                    else int(event_clock.relative_frame(scenario_frame))
+                ),
+                "trigger_relative_s": (
+                    "" if event_clock.relative_frame(scenario_frame) is None
+                    else float(event_clock.relative_frame(scenario_frame)) / fps
+                ),
+                "trigger_observed_progress_m": (
+                    "" if event_clock.trigger_observed_progress_m is None
+                    else float(event_clock.trigger_observed_progress_m)
+                ),
 
                 "ego_x":
                     float(
@@ -2819,6 +3196,12 @@ def main():
                     float(
                         speed_mps
                     ),
+
+                "ego_acceleration_mps2":
+                    float(acceleration_mps2),
+
+                "ego_jerk_mps3":
+                    float(jerk_mps3),
 
                 "route_index":
                     int(
@@ -2884,6 +3267,26 @@ def main():
                 "active_actor_count":
                     len(
                         active_actors
+                    ),
+                "nearest_actor_id":
+                    (
+                        "" if footprint_metrics is None
+                        else footprint_metrics["actor_id"]
+                    ),
+                "nearest_actor_center_distance_m":
+                    (
+                        "" if footprint_metrics is None
+                        else footprint_metrics["center_distance_m"]
+                    ),
+                "nearest_actor_clearance_m":
+                    (
+                        "" if footprint_metrics is None
+                        else footprint_metrics["clearance_m"]
+                    ),
+                "physical_overlap":
+                    (
+                        "" if footprint_metrics is None
+                        else int(footprint_metrics["overlaps"])
                     ),
                 "metric_actor_id":
                     (
@@ -3068,6 +3471,15 @@ def main():
                         depth
                     )
                 )
+
+                occlusion = scene_occlusion_summary(composite)
+                row[f"{camera_name}_scene_depth_used"] = int(
+                    args.condition == "he"
+                    and camera_name in scene_depth_by_camera
+                )
+                row[f"{camera_name}_occluded_actor_count"] = occlusion["occluded_actor_count"]
+                row[f"{camera_name}_fully_occluded_actor_count"] = occlusion["fully_occluded_actor_count"]
+                row[f"{camera_name}_maximum_occluded_fraction"] = occlusion["maximum_occluded_fraction"]
                 rendered = rendered_rows(
                     composite
                 )
@@ -3113,6 +3525,48 @@ def main():
                     f"{camera_name}_selected_elevation_deg"
                 ] = he_meta.get(
                     "selected_elevation_deg",
+                    "",
+                )
+                row[f"{camera_name}_silhouette_scale"] = he_meta.get(
+                    "silhouette_scale",
+                    "" if args.condition != "he" else float(args.he_silhouette_scale),
+                )
+                resize_info = he_meta.get(
+                    "resize_info",
+                    {},
+                )
+                if not isinstance(resize_info, dict):
+                    resize_info = {}
+                row[f"{camera_name}_warp_scale_mode"] = he_meta.get(
+                    "warp_scale_mode",
+                    resize_info.get("scale_mode", ""),
+                )
+                row[f"{camera_name}_viewpoint_lateral_sign"] = he_meta.get(
+                    "viewpoint_lateral_sign",
+                    "",
+                )
+                row[f"{camera_name}_sprite_width_px"] = he_meta.get(
+                    "sprite_width",
+                    "",
+                )
+                row[f"{camera_name}_sprite_height_px"] = he_meta.get(
+                    "sprite_height",
+                    "",
+                )
+                row[f"{camera_name}_target_box_width_px"] = he_meta.get(
+                    "target_box_width_px",
+                    "",
+                )
+                row[f"{camera_name}_target_box_height_px"] = he_meta.get(
+                    "target_box_height_px",
+                    "",
+                )
+                row[f"{camera_name}_subpixel_scale_x"] = resize_info.get(
+                    "scale_x",
+                    "",
+                )
+                row[f"{camera_name}_subpixel_scale_y"] = resize_info.get(
+                    "scale_y",
                     "",
                 )
 
@@ -3297,6 +3751,21 @@ def main():
                 end_frame
             ):
 
+                ego_event_projection = route_projector.project(
+                    x=float(ego_loc.x),
+                    y=float(ego_loc.y),
+                    previous_segment_idx=event_route_segment,
+                )
+                event_route_segment = ego_event_projection.segment_idx
+                next_scenario_frame = scenario_frame + 1
+                actor_source_frame = min(
+                    end_frame,
+                    event_clock.observe_for_next_frame(
+                        next_execution_frame=next_scenario_frame,
+                        ego_route_progress_m=ego_event_projection.s_m,
+                    ),
+                )
+
                 if (
                     traffic_light_executor
                     is not None
@@ -3318,11 +3787,6 @@ def main():
                     )
                 if args.condition == "carla":
 
-                    next_scenario_frame = (
-                        scenario_frame
-                        + 1
-                    )
-
                     sync_carla_scenario_actors(
                         world=world,
                         carla_map=carla_map,
@@ -3330,7 +3794,7 @@ def main():
                             scenario_carla_actors,
                         active_states=
                             runtime.active_actors(
-                                next_scenario_frame
+                                actor_source_frame
                             ),
                     )
                 current_frame = (
@@ -3342,6 +3806,18 @@ def main():
                         current_frame
                     )
                 )
+
+                scene_depth_by_camera = {}
+                if args.condition == "he":
+                    for camera_name, depth_queue in scene_depth_queues.items():
+                        depth_image = read_exact_sensor_frame(
+                            depth_queue,
+                            current_frame,
+                            f"HE {camera_name} depth",
+                        )
+                        scene_depth_by_camera[camera_name] = (
+                            carla_depth_image_to_m(depth_image)
+                        )
 
         # ====================================================
         # Final
