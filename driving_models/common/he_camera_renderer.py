@@ -31,6 +31,7 @@ without modifying the frozen TCP renderer.
 from __future__ import annotations
 
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -3085,6 +3086,8 @@ def render_he_actor_view_matrix(
             else "legacy_alpha_bottom"
         )
     if (
+        os.environ.get("HE_DEBUG_ANCHOR") == "1"
+        and
         float(box["depth_m"]) < 20.0
         and
         abs(float(box["camera_right_m"])) > 1.0

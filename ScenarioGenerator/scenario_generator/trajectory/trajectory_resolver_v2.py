@@ -2101,21 +2101,21 @@ class V2TrajectoryResolver:
                         ),
                     )
                 )
-            # ----------------------------------------------------
-            # Final physical velocity reconstruction
-            # ----------------------------------------------------
+        # ----------------------------------------------------
+        # Final physical velocity reconstruction
+        # ----------------------------------------------------
 
-            ego_frames = (
-                recompute_velocities_from_positions(
-                    ego_frames
-                )
+        ego_frames = (
+            recompute_velocities_from_positions(
+                ego_frames
             )
+        )
 
-            actor_frames = (
-                recompute_actor_velocities(
-                    actor_frames
-                )
+        actor_frames = (
+            recompute_actor_velocities(
+                actor_frames
             )
+        )
         return ResolvedScenarioV2(
             scenario_id=(
                 scenario.scenario_id

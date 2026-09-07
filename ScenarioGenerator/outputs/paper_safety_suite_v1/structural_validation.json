@@ -1,0 +1,32 @@
+{
+  "valid": true,
+  "scenario_count": 20,
+  "outcome_counts": {
+    "collision_free": 15,
+    "collision_required": 5
+  },
+  "minimum_authored_actor_clearance_m": {
+    "long_01_signalized_lead_turn_001": null,
+    "long_02_close_lead_emergency_brake_001": null,
+    "long_03_close_cutin_brake_001": null,
+    "long_04_bus_cutout_reveal_stop_001": 0.7478108399404675,
+    "long_05_crossing_nissan_001": null,
+    "long_06_crossing_bus_001": null,
+    "long_07_pedestrian_emergence_001": null,
+    "long_08_bus_occluded_pedestrian_001": 1.6759999999969506,
+    "long_09_stopped_queue_multi_actor_001": 7.362158562561532,
+    "long_10_lead_brake_pedestrian_001": 0.32449904427452275,
+    "paper_11_follow_tesla_brake_001": null,
+    "paper_12_crossing_tesla_reverse_001": null,
+    "paper_13_pedestrian_reverse_001": null,
+    "paper_14_two_pedestrians_001": 5.624999999997375,
+    "paper_15_offset_stopped_hazards_001": 5.673369431337044,
+    "paper_16_collision_nissan_001": null,
+    "paper_17_collision_tesla_001": null,
+    "paper_18_collision_bus_001": null,
+    "paper_19_collision_pedestrian_001": null,
+    "paper_20_collision_pedestrian_reverse_001": null
+  },
+  "campaign_rows": [],
+  "failures": []
+}

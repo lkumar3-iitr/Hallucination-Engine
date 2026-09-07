@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "scenario_id": "paper_14_two_pedestrians_001",
+  "town": "Town10HD_Opt",
+  "route": {
+    "spawn_index": 10,
+    "destination_index": 45,
+    "route_csv": "D:\\HallucinationEngine\\driving_models\\common\\outputs\\town10_spawn10_to45_route_v1\\route.csv"
+  },
+  "traffic_lights": [
+    {
+      "traffic_light_id": 824,
+      "route_progress_m": 157.1748760430906,
+      "stop_route_progress_m": 153.6748760430906,
+      "phases": [
+        {
+          "state": "Red",
+          "start_s": 0.0,
+          "end_s": 30.0
+        },
+        {
+          "state": "Green",
+          "start_s": 30.0,
+          "end_s": 40.0
+        }
+      ]
+    }
+  ],
+  "weather": {
+    "preset": "ClearNoon"
+  },
+  "lead_motion": {
+    "actor_id": "adv_lead",
+    "initial_route_progress_m": 12.0,
+    "cruise_speed_mps": 5.5,
+    "brake_start_route_progress_m": 142.6748760430906,
+    "brake_start_time_s": 23.759068371471017,
+    "stop_route_progress_m": 153.6748760430906,
+    "stop_time_s": 27.759068371471017,
+    "green_time_s": 30.0,
+    "accel_end_time_s": 32.5
+  }
+}

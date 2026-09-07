@@ -1,0 +1,76 @@
+{
+  "schema": "important_curated_oncoming_close_suite_manifest_v1",
+  "suite_id": "important_curated_oncoming_close_all_assets_v1",
+  "fps": 20,
+  "duration_s": 20.0,
+  "scenario_count": 1,
+  "expected_outcome_counts": {
+    "collision_free": 1,
+    "collision_required": 0
+  },
+  "models": [
+    "tcp",
+    "neat",
+    "cilpp",
+    "aimmt"
+  ],
+  "conditions": [
+    "carla",
+    "he"
+  ],
+  "route_csv": "driving_models/common/outputs/town10_spawn10_to45_route_v1/route.csv",
+  "cases": [
+    {
+      "scenario_id": "curated_oncoming_close_all_assets_400",
+      "category": "oncoming_close_all_assets",
+      "metric_actor_id": "oncoming_bus",
+      "event_start_s": 0.0,
+      "event_source_start_s": 0.0,
+      "trigger_route_progress_m": null,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 20.0,
+      "fps": 20,
+      "critical_frames": [
+        70,
+        90,
+        110,
+        180,
+        200,
+        220,
+        290,
+        310,
+        330
+      ],
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": false,
+        "conflict_point_timing": false,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "vehicle.tesla.model3",
+        "vehicle.passenger_02",
+        "vehicle.bus_01",
+        "pedestrian.person_01"
+      ],
+      "actor_ids": [
+        "oncoming_tesla",
+        "oncoming_patrol",
+        "oncoming_bus",
+        "oncoming_pedestrian"
+      ],
+      "semantic": "semantic\\curated_oncoming_close_all_assets_400.semantic_v2.json",
+      "resolved": "..\\important_curated_scenarios\\resolved\\curated_oncoming_close_all_assets_400.resolved_v2.json",
+      "resolved_sha256": "c59823f22c639b4e63f2b7951f9bad05e01f6a4c261a71a4a9ae923237301bf2",
+      "environment": "..\\important_curated_scenarios\\environment\\curated_oncoming_close_all_assets_400.environment_v1.json",
+      "validation": "..\\important_curated_scenarios\\validation\\curated_oncoming_close_all_assets_400.all_pairs_clearance_v1.json",
+      "status": "requires_visual_acceptance"
+    }
+  ]
+}

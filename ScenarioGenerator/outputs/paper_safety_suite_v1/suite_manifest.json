@@ -1,0 +1,695 @@
+{
+  "schema": "paper_safety_suite_manifest_v1",
+  "suite_id": "paper_safety_suite_v1_15_safe_5_collision",
+  "fps": 20,
+  "duration_s": 40.0,
+  "scenario_count": 20,
+  "expected_outcome_counts": {
+    "collision_free": 15,
+    "collision_required": 5
+  },
+  "models": [
+    "tcp",
+    "neat",
+    "cilpp",
+    "aimmt"
+  ],
+  "conditions": [
+    "carla",
+    "he"
+  ],
+  "route_csv": "driving_models\\common\\outputs\\town10_spawn10_to45_route_v1\\route.csv",
+  "cases": [
+    {
+      "scenario_id": "long_01_signalized_lead_turn_001",
+      "category": "signalized_lead_follow",
+      "metric_actor_id": "lead_tesla",
+      "event_start_s": 23.75,
+      "event_source_start_s": 23.75,
+      "trigger_route_progress_m": null,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": true,
+        "conflict_point_timing": false,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": false
+      },
+      "asset_keys": [
+        "vehicle.passenger_01"
+      ],
+      "actor_ids": [
+        "lead_tesla"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\long_01_signalized_lead_turn_001.resolved_v2.json",
+      "resolved_sha256": "0f7b1a96b23266263210c5aa146efb6a6966e014e4c4df7c0afd2e396eb172d8",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\long_01_signalized_lead_turn_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "long_02_close_lead_emergency_brake_001",
+      "category": "lead_emergency_brake",
+      "metric_actor_id": "lead_nissan",
+      "event_start_s": 11.0,
+      "event_source_start_s": 11.0,
+      "trigger_route_progress_m": 60.0,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": true,
+        "conflict_point_timing": false,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": false
+      },
+      "asset_keys": [
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "lead_nissan"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\long_02_close_lead_emergency_brake_001.resolved_v2.json",
+      "resolved_sha256": "b6e2936431321366776943c3f9ee942cda05ebf03a984c68879efbbb44dd76da",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\long_02_close_lead_emergency_brake_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "long_03_close_cutin_brake_001",
+      "category": "cutin_then_brake",
+      "metric_actor_id": "cutin_tesla",
+      "event_start_s": 10.0,
+      "event_source_start_s": 10.0,
+      "trigger_route_progress_m": 55.0,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": true,
+        "conflict_point_timing": false,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "vehicle.passenger_01"
+      ],
+      "actor_ids": [
+        "cutin_tesla"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\long_03_close_cutin_brake_001.resolved_v2.json",
+      "resolved_sha256": "f242efd2d77fe98aa07e2645c6684357fbd330c0115a6d3be174357643981659",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\long_03_close_cutin_brake_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "long_04_bus_cutout_reveal_stop_001",
+      "category": "partial_observability_cutout",
+      "metric_actor_id": "hidden_nissan",
+      "event_start_s": 11.0,
+      "event_source_start_s": 11.0,
+      "trigger_route_progress_m": 50.0,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": true,
+        "conflict_point_timing": false,
+        "occlusion": true,
+        "comfort": true,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "vehicle.bus_01",
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "cutout_bus",
+        "hidden_nissan"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\long_04_bus_cutout_reveal_stop_001.resolved_v2.json",
+      "resolved_sha256": "c3538688201fd7cf49394945c988bfb936434bb71d135b724dd85f11614d5e22",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\long_04_bus_cutout_reveal_stop_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "long_05_crossing_nissan_001",
+      "category": "crossing_vehicle",
+      "metric_actor_id": "crossing_nissan",
+      "event_start_s": 11.0,
+      "event_source_start_s": 11.0,
+      "trigger_route_progress_m": 59.0,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": false,
+        "conflict_point_timing": true,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "crossing_nissan"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\long_05_crossing_nissan_001.resolved_v2.json",
+      "resolved_sha256": "f1971896ae1c0ff12881facc551e77d9456661d2dda4e04e19af674e2290261c",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\long_05_crossing_nissan_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "long_06_crossing_bus_001",
+      "category": "crossing_bus",
+      "metric_actor_id": "crossing_bus",
+      "event_start_s": 12.0,
+      "event_source_start_s": 12.0,
+      "trigger_route_progress_m": 63.0,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": false,
+        "conflict_point_timing": true,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "vehicle.bus_01"
+      ],
+      "actor_ids": [
+        "crossing_bus"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\long_06_crossing_bus_001.resolved_v2.json",
+      "resolved_sha256": "5a9de3f9b218eb3a2be9f29c7009ae35f297e3f1a3944c0165bbe729381f7a21",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\long_06_crossing_bus_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "long_07_pedestrian_emergence_001",
+      "category": "pedestrian_crossing",
+      "metric_actor_id": "crossing_pedestrian",
+      "event_start_s": 11.5,
+      "event_source_start_s": 11.5,
+      "trigger_route_progress_m": 57.0,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": false,
+        "conflict_point_timing": true,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": false
+      },
+      "asset_keys": [
+        "pedestrian.person_01"
+      ],
+      "actor_ids": [
+        "crossing_pedestrian"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\long_07_pedestrian_emergence_001.resolved_v2.json",
+      "resolved_sha256": "afcd1efcdc0c81a9503e96806380cea9e0fb411c7e7ff0d1720e91749e2743b3",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\long_07_pedestrian_emergence_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "long_08_bus_occluded_pedestrian_001",
+      "category": "occluded_pedestrian",
+      "metric_actor_id": "hidden_pedestrian",
+      "event_start_s": 12.0,
+      "event_source_start_s": 12.0,
+      "trigger_route_progress_m": 55.0,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": false,
+        "conflict_point_timing": true,
+        "occlusion": true,
+        "comfort": true,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "pedestrian.person_01",
+        "vehicle.bus_01"
+      ],
+      "actor_ids": [
+        "parked_bus",
+        "hidden_pedestrian"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\long_08_bus_occluded_pedestrian_001.resolved_v2.json",
+      "resolved_sha256": "39026330d2b4055b44009fbabddbfbc6e7d2693a664b552d78ca46c51a33fc41",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\long_08_bus_occluded_pedestrian_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "long_09_stopped_queue_multi_actor_001",
+      "category": "stopped_queue",
+      "metric_actor_id": "queue_tail",
+      "event_start_s": 10.5,
+      "event_source_start_s": 10.5,
+      "trigger_route_progress_m": 57.0,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": true,
+        "conflict_point_timing": false,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": false
+      },
+      "asset_keys": [
+        "vehicle.bus_01",
+        "vehicle.passenger_01"
+      ],
+      "actor_ids": [
+        "queue_tail",
+        "queue_front"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\long_09_stopped_queue_multi_actor_001.resolved_v2.json",
+      "resolved_sha256": "060b3882434366a6c46f09d7b0092a247e6ef628b2409095d5384ebb6c5447d4",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\long_09_stopped_queue_multi_actor_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "long_10_lead_brake_pedestrian_001",
+      "category": "multi_actor_compound",
+      "metric_actor_id": "lead_nissan",
+      "event_start_s": 10.5,
+      "event_source_start_s": 10.5,
+      "trigger_route_progress_m": 58.0,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": true,
+        "conflict_point_timing": false,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": false
+      },
+      "asset_keys": [
+        "pedestrian.person_01",
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "lead_nissan",
+        "side_pedestrian"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\long_10_lead_brake_pedestrian_001.resolved_v2.json",
+      "resolved_sha256": "5e3695bf71e7f462cb304ef4805bef913f187c2eaacac7f11fbac320be2fb3ca",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\long_10_lead_brake_pedestrian_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "paper_11_follow_tesla_brake_001",
+      "category": "lead_emergency_brake",
+      "metric_actor_id": "lead_tesla_2",
+      "event_start_s": 12.0,
+      "event_source_start_s": 12.0,
+      "trigger_route_progress_m": 62.0,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": true,
+        "conflict_point_timing": false,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": false
+      },
+      "asset_keys": [
+        "vehicle.passenger_01"
+      ],
+      "actor_ids": [
+        "lead_tesla_2"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\paper_11_follow_tesla_brake_001.resolved_v2.json",
+      "resolved_sha256": "475047e04d411700bce888faad3e6fc6e1722de131843405b1e06b1930c31c65",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\paper_11_follow_tesla_brake_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "paper_12_crossing_tesla_reverse_001",
+      "category": "crossing_vehicle",
+      "metric_actor_id": "crossing_tesla",
+      "event_start_s": 11.5,
+      "event_source_start_s": 11.5,
+      "trigger_route_progress_m": 60.0,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": false,
+        "conflict_point_timing": true,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "vehicle.passenger_01"
+      ],
+      "actor_ids": [
+        "crossing_tesla"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\paper_12_crossing_tesla_reverse_001.resolved_v2.json",
+      "resolved_sha256": "1817529d29fbd10ebbba160ad2b0cd9c5c088021d2c27e8e1e091e704146cf44",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\paper_12_crossing_tesla_reverse_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "paper_13_pedestrian_reverse_001",
+      "category": "pedestrian_crossing",
+      "metric_actor_id": "reverse_pedestrian",
+      "event_start_s": 12.0,
+      "event_source_start_s": 12.0,
+      "trigger_route_progress_m": 59.0,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": false,
+        "conflict_point_timing": true,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": false
+      },
+      "asset_keys": [
+        "pedestrian.person_01"
+      ],
+      "actor_ids": [
+        "reverse_pedestrian"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\paper_13_pedestrian_reverse_001.resolved_v2.json",
+      "resolved_sha256": "63275c2d7aa8a650872c34473fc4b084fb338f1173f94e1d51bd4d3c9c8f76f2",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\paper_13_pedestrian_reverse_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "paper_14_two_pedestrians_001",
+      "category": "multi_pedestrian_crossing",
+      "metric_actor_id": "pedestrian_a",
+      "event_start_s": 11.0,
+      "event_source_start_s": 11.0,
+      "trigger_route_progress_m": 57.0,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": false,
+        "conflict_point_timing": true,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": false
+      },
+      "asset_keys": [
+        "pedestrian.person_01"
+      ],
+      "actor_ids": [
+        "pedestrian_a",
+        "pedestrian_b"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\paper_14_two_pedestrians_001.resolved_v2.json",
+      "resolved_sha256": "78049b7e19f42b9755510a6e39f9ae8caa53818c731137285b1eca8f2d0fff5d",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\paper_14_two_pedestrians_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "paper_15_offset_stopped_hazards_001",
+      "category": "stopped_queue",
+      "metric_actor_id": "stopped_nissan",
+      "event_start_s": 10.0,
+      "event_source_start_s": 10.0,
+      "trigger_route_progress_m": 60.0,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": true,
+        "conflict_point_timing": false,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": false
+      },
+      "asset_keys": [
+        "vehicle.bus_01",
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "stopped_nissan",
+        "offset_bus"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\paper_15_offset_stopped_hazards_001.resolved_v2.json",
+      "resolved_sha256": "2f2bcf34f9505cd6ecb06ae4abc6ba314424fbf6ac0d797dd7d9bd832725dcf6",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\paper_15_offset_stopped_hazards_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "paper_16_collision_nissan_001",
+      "category": "collision_positive_control",
+      "metric_actor_id": "collision_nissan",
+      "event_start_s": 12.0,
+      "event_source_start_s": 12.0,
+      "trigger_route_progress_m": 64.0,
+      "pre_trigger_source_frame": 239,
+      "expected_outcome": "collision_required",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": false,
+        "conflict_point_timing": true,
+        "occlusion": false,
+        "comfort": false,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "collision_nissan"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\paper_16_collision_nissan_001.resolved_v2.json",
+      "resolved_sha256": "45ca58c89bf4ed8d0f22cf215b1102aa2673c97aa6b5447a019d1f3f9a1d336e",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\paper_16_collision_nissan_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "paper_17_collision_tesla_001",
+      "category": "collision_positive_control",
+      "metric_actor_id": "collision_tesla",
+      "event_start_s": 12.0,
+      "event_source_start_s": 12.0,
+      "trigger_route_progress_m": 69.0,
+      "pre_trigger_source_frame": 239,
+      "expected_outcome": "collision_required",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": false,
+        "conflict_point_timing": true,
+        "occlusion": false,
+        "comfort": false,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "vehicle.passenger_01"
+      ],
+      "actor_ids": [
+        "collision_tesla"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\paper_17_collision_tesla_001.resolved_v2.json",
+      "resolved_sha256": "b747bd804f68a83ef20884f9ca51bb319b5e7fa8214d170961ca0c4984a1ab3a",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\paper_17_collision_tesla_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "paper_18_collision_bus_001",
+      "category": "collision_positive_control",
+      "metric_actor_id": "collision_bus",
+      "event_start_s": 12.0,
+      "event_source_start_s": 12.0,
+      "trigger_route_progress_m": 76.0,
+      "pre_trigger_source_frame": 239,
+      "expected_outcome": "collision_required",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": false,
+        "conflict_point_timing": true,
+        "occlusion": false,
+        "comfort": false,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "vehicle.bus_01"
+      ],
+      "actor_ids": [
+        "collision_bus"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\paper_18_collision_bus_001.resolved_v2.json",
+      "resolved_sha256": "138deb0fee8484188f8f184ebb6f1d6bcb09951dbe48ea9ecd9bfea82642c5b1",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\paper_18_collision_bus_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "paper_19_collision_pedestrian_001",
+      "category": "collision_positive_control",
+      "metric_actor_id": "collision_pedestrian",
+      "event_start_s": 12.0,
+      "event_source_start_s": 12.0,
+      "trigger_route_progress_m": 68.0,
+      "pre_trigger_source_frame": 239,
+      "expected_outcome": "collision_required",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": false,
+        "conflict_point_timing": true,
+        "occlusion": false,
+        "comfort": false,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "pedestrian.person_01"
+      ],
+      "actor_ids": [
+        "collision_pedestrian"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\paper_19_collision_pedestrian_001.resolved_v2.json",
+      "resolved_sha256": "d60a57b88b0d4f36e01c7e63c6a5714414c28eb36022b8f501ddec4ccdf7e907",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\paper_19_collision_pedestrian_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "paper_20_collision_pedestrian_reverse_001",
+      "category": "collision_positive_control",
+      "metric_actor_id": "collision_pedestrian_reverse",
+      "event_start_s": 12.0,
+      "event_source_start_s": 12.0,
+      "trigger_route_progress_m": 75.0,
+      "pre_trigger_source_frame": 239,
+      "expected_outcome": "collision_required",
+      "duration_s": 40.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": false,
+        "conflict_point_timing": true,
+        "occlusion": false,
+        "comfort": false,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "pedestrian.person_01"
+      ],
+      "actor_ids": [
+        "collision_pedestrian_reverse"
+      ],
+      "resolved": "outputs\\paper_safety_suite_v1\\resolved\\paper_20_collision_pedestrian_reverse_001.resolved_v2.json",
+      "resolved_sha256": "8b0977c11fe6d95a40a097d2cc45a3df12818abd61fe594f11a721693a515bd9",
+      "environment": "outputs\\paper_safety_suite_v1\\environment\\paper_20_collision_pedestrian_reverse_001.environment_v1.json",
+      "status": "requires_smoke_and_visual_acceptance"
+    }
+  ]
+}

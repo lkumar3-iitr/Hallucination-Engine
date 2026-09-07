@@ -1,0 +1,28 @@
+{
+  "schema": "resolved_all_pairs_clearance_validation_v1",
+  "status": "PASS",
+  "scenario_id": "curated_multi_06_lead_brake_left_cutin_001",
+  "resolved_path": "D:\\HallucinationEngine\\important_curated_scenarios\\resolved\\curated_multi_06_lead_brake_left_cutin_001.resolved_v2.json",
+  "minimum_clearance": {
+    "frame_idx": 400,
+    "t_s": 20.0,
+    "pair": "lead_patrol__left_cutin_tesla",
+    "clearance_m": 10.321000000000026,
+    "overlaps": false
+  },
+  "pair_minimum_clearances": {
+    "lead_patrol__left_cutin_tesla": {
+      "frame_idx": 400,
+      "t_s": 20.0,
+      "pair": "lead_patrol__left_cutin_tesla",
+      "clearance_m": 10.321000000000026,
+      "overlaps": false
+    }
+  },
+  "minimum_clearance_required_m": 1.0,
+  "minimum_bus_clearance_required_m": 1.5,
+  "include_ego": false,
+  "overlap_frame_count": 0,
+  "first_overlap": null,
+  "failures": []
+}

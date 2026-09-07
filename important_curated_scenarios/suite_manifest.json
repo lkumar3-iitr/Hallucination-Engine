@@ -1,0 +1,94 @@
+{
+  "schema": "important_curated_scenarios_manifest_v1",
+  "suite_id": "important_curated_left_cutin_stop_resume_left_stop_v1",
+  "fps": 20,
+  "duration_s": 18.0,
+  "scenario_count": 2,
+  "expected_outcome_counts": {
+    "collision_free": 2,
+    "collision_required": 0
+  },
+  "models": [
+    "tcp",
+    "neat",
+    "cilpp",
+    "aimmt"
+  ],
+  "conditions": [
+    "carla",
+    "he"
+  ],
+  "route_csv": "driving_models/common/outputs/town10_spawn10_to45_route_v1/route.csv",
+  "cases": [
+    {
+      "scenario_id": "left_cutin_stop_resume_left_stop_clear",
+      "category": "left_cutin_stop_resume",
+      "metric_actor_id": "adv_tesla",
+      "event_start_s": 1.0,
+      "event_source_start_s": 1.0,
+      "trigger_route_progress_m": null,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 18.0,
+      "fps": 20,
+      "weather_preset": "ClearNoon",
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": true,
+        "conflict_point_timing": false,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "vehicle.tesla.model3"
+      ],
+      "actor_ids": [
+        "adv_tesla"
+      ],
+      "semantic": "semantic/left_cutin_stop_resume_left_stop_clear.semantic_v2.json",
+      "resolved": "../important_curated_scenarios/resolved/left_cutin_stop_resume_left_stop_clear.resolved_v2.json",
+      "resolved_sha256": "002d973450ac76ca4b06b6ccec674aa499385b6438b71877a0d9abdb51a3148d",
+      "environment": "../important_curated_scenarios/environment/left_cutin_stop_resume_left_stop_clear.environment_v1.json",
+      "status": "requires_visual_acceptance"
+    },
+    {
+      "scenario_id": "left_cutin_stop_resume_left_stop_hardrain",
+      "category": "left_cutin_stop_resume",
+      "metric_actor_id": "adv_tesla",
+      "event_start_s": 1.0,
+      "event_source_start_s": 1.0,
+      "trigger_route_progress_m": null,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 18.0,
+      "fps": 20,
+      "weather_preset": "HardRainNoon",
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": true,
+        "conflict_point_timing": false,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "vehicle.tesla.model3"
+      ],
+      "actor_ids": [
+        "adv_tesla"
+      ],
+      "semantic": "semantic/left_cutin_stop_resume_left_stop_hardrain.semantic_v2.json",
+      "resolved": "../important_curated_scenarios/resolved/left_cutin_stop_resume_left_stop_hardrain.resolved_v2.json",
+      "resolved_sha256": "4b213e9425d47add29f1f405ca3c9ef719628f8d6b468a1f7d7246fd0ede591a",
+      "environment": "../important_curated_scenarios/environment/left_cutin_stop_resume_left_stop_hardrain.environment_v1.json",
+      "status": "requires_visual_acceptance"
+    }
+  ]
+}

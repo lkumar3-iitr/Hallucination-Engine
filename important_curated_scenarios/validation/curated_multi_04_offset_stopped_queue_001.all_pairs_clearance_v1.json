@@ -1,0 +1,28 @@
+{
+  "schema": "resolved_all_pairs_clearance_validation_v1",
+  "status": "PASS",
+  "scenario_id": "curated_multi_04_offset_stopped_queue_001",
+  "resolved_path": "D:\\HallucinationEngine\\important_curated_scenarios\\resolved\\curated_multi_04_offset_stopped_queue_001.resolved_v2.json",
+  "minimum_clearance": {
+    "frame_idx": 0,
+    "t_s": 0.0,
+    "pair": "queue_front_bus__queue_tail_tesla",
+    "clearance_m": 12.650929550827481,
+    "overlaps": false
+  },
+  "pair_minimum_clearances": {
+    "queue_front_bus__queue_tail_tesla": {
+      "frame_idx": 0,
+      "t_s": 0.0,
+      "pair": "queue_front_bus__queue_tail_tesla",
+      "clearance_m": 12.650929550827481,
+      "overlaps": false
+    }
+  },
+  "minimum_clearance_required_m": 1.0,
+  "minimum_bus_clearance_required_m": 1.5,
+  "include_ego": false,
+  "overlap_frame_count": 0,
+  "first_overlap": null,
+  "failures": []
+}

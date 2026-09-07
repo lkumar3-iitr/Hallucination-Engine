@@ -1,0 +1,20 @@
+{
+  "schema": "resolved_all_pairs_clearance_validation_v1",
+  "status": "PASS",
+  "scenario_id": "curated_long_route_dense_clear_001",
+  "minimum_clearance": {
+    "frame_idx": 0,
+    "t_s": 0.0,
+    "pair": "bg_tesla_01__bg_tesla_02",
+    "clearance_m": 1.3369999999999997,
+    "overlaps": false
+  },
+  "minimum_clearance_required_m": 0.75,
+  "minimum_bus_clearance_required_m": 1.25,
+  "include_ego": false,
+  "frame_step": 4,
+  "sampled_dt_s": 0.2,
+  "overlap_frame_count": 0,
+  "first_overlap": null,
+  "failures": []
+}

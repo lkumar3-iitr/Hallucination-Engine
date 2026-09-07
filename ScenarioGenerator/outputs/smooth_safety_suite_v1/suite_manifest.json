@@ -1,0 +1,344 @@
+{
+  "schema": "smooth_safety_suite_manifest_v1",
+  "suite_id": "smooth_safety_suite_v1",
+  "fps": 20,
+  "duration_s": 10.0,
+  "scenario_count": 10,
+  "models": [
+    "tcp",
+    "neat",
+    "cilpp",
+    "aimmt"
+  ],
+  "conditions": [
+    "carla",
+    "he"
+  ],
+  "cases": [
+    {
+      "scenario_id": "smooth_01_stopped_vehicle_001",
+      "category": "static_obstacle",
+      "metric_actor_id": "stopped_hazard",
+      "event_start_s": 0.0,
+      "asset_keys": [
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "stopped_hazard"
+      ],
+      "critical_frames": [
+        0,
+        40,
+        80,
+        100,
+        120,
+        160,
+        200
+      ],
+      "spec": "outputs\\smooth_safety_suite_v1\\specs\\smooth_01_stopped_vehicle_001.scenario_v2.json",
+      "resolved": "outputs\\smooth_safety_suite_v1\\resolved\\smooth_01_stopped_vehicle_001.resolved_v2.json",
+      "resolved_sha256": "d98200f5c4de2bf352e0b56a37d2b8f3f874dd356f67a0647ed5b9a8204e9a0b",
+      "motion_qa": {
+        "stopped_hazard": {
+          "max_abs_yaw_rate_deg_s": 0.0,
+          "max_abs_acceleration_mps2": 0.0
+        }
+      },
+      "status": "requires_visual_acceptance"
+    },
+    {
+      "scenario_id": "smooth_02_lead_hard_brake_001",
+      "category": "sudden_braking",
+      "metric_actor_id": "braking_lead",
+      "event_start_s": 3.0,
+      "asset_keys": [
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "braking_lead"
+      ],
+      "critical_frames": [
+        0,
+        40,
+        80,
+        100,
+        120,
+        160,
+        200
+      ],
+      "spec": "outputs\\smooth_safety_suite_v1\\specs\\smooth_02_lead_hard_brake_001.scenario_v2.json",
+      "resolved": "outputs\\smooth_safety_suite_v1\\resolved\\smooth_02_lead_hard_brake_001.resolved_v2.json",
+      "resolved_sha256": "f62c08c28ebd1de12d69c5f23ff6faaaffbade53599098a18a746f7471201357",
+      "motion_qa": {
+        "braking_lead": {
+          "max_abs_yaw_rate_deg_s": 0.0,
+          "max_abs_acceleration_mps2": 6.551567999997628
+        }
+      },
+      "status": "requires_visual_acceptance"
+    },
+    {
+      "scenario_id": "smooth_03_right_cutin_001",
+      "category": "cut_in",
+      "metric_actor_id": "cutin_actor",
+      "event_start_s": 2.0,
+      "asset_keys": [
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "cutin_actor"
+      ],
+      "critical_frames": [
+        0,
+        40,
+        80,
+        100,
+        120,
+        160,
+        200
+      ],
+      "spec": "outputs\\smooth_safety_suite_v1\\specs\\smooth_03_right_cutin_001.scenario_v2.json",
+      "resolved": "outputs\\smooth_safety_suite_v1\\resolved\\smooth_03_right_cutin_001.resolved_v2.json",
+      "resolved_sha256": "04ea8033409ba00b3a275b7d216c4de9918511aa7c61aa7fe2c829a79f10a668",
+      "motion_qa": {
+        "cutin_actor": {
+          "max_abs_yaw_rate_deg_s": 11.888253000000233,
+          "max_abs_acceleration_mps2": 0.20916890284093345
+        }
+      },
+      "status": "requires_visual_acceptance"
+    },
+    {
+      "scenario_id": "smooth_04_cutout_reveal_001",
+      "category": "partial_observability_cutout",
+      "metric_actor_id": "revealed_hazard",
+      "event_start_s": 2.0,
+      "asset_keys": [
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "cutout_lead",
+        "revealed_hazard"
+      ],
+      "critical_frames": [
+        0,
+        40,
+        80,
+        100,
+        120,
+        160,
+        200
+      ],
+      "spec": "outputs\\smooth_safety_suite_v1\\specs\\smooth_04_cutout_reveal_001.scenario_v2.json",
+      "resolved": "outputs\\smooth_safety_suite_v1\\resolved\\smooth_04_cutout_reveal_001.resolved_v2.json",
+      "resolved_sha256": "3b09d273353b451808b4403625d4d7be4a544697330b558617fcd7f6c01ceac1",
+      "motion_qa": {
+        "cutout_lead": {
+          "max_abs_yaw_rate_deg_s": 16.80933400000021,
+          "max_abs_acceleration_mps2": 0.3366854202237958
+        },
+        "revealed_hazard": {
+          "max_abs_yaw_rate_deg_s": 0.0,
+          "max_abs_acceleration_mps2": 0.0
+        }
+      },
+      "status": "requires_visual_acceptance"
+    },
+    {
+      "scenario_id": "smooth_05_oncoming_pass_001",
+      "category": "oncoming",
+      "metric_actor_id": "oncoming_actor",
+      "event_start_s": 3.5,
+      "asset_keys": [
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "oncoming_actor"
+      ],
+      "critical_frames": [
+        0,
+        40,
+        80,
+        100,
+        120,
+        160,
+        200
+      ],
+      "spec": "outputs\\smooth_safety_suite_v1\\specs\\smooth_05_oncoming_pass_001.scenario_v2.json",
+      "resolved": "outputs\\smooth_safety_suite_v1\\resolved\\smooth_05_oncoming_pass_001.resolved_v2.json",
+      "resolved_sha256": "abbbc7a4176a1aa02b13f0d9e5903553e5781f28213ab401f775cded372ada92",
+      "motion_qa": {
+        "oncoming_actor": {
+          "max_abs_yaw_rate_deg_s": 0.0,
+          "max_abs_acceleration_mps2": 8.881784197001441e-12
+        }
+      },
+      "status": "requires_visual_acceptance"
+    },
+    {
+      "scenario_id": "smooth_06_crossing_vehicle_001",
+      "category": "crossing_vehicle",
+      "metric_actor_id": "crossing_actor",
+      "event_start_s": 4.0,
+      "asset_keys": [
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "crossing_actor"
+      ],
+      "critical_frames": [
+        0,
+        40,
+        80,
+        100,
+        120,
+        160,
+        200
+      ],
+      "spec": "outputs\\smooth_safety_suite_v1\\specs\\smooth_06_crossing_vehicle_001.scenario_v2.json",
+      "resolved": "outputs\\smooth_safety_suite_v1\\resolved\\smooth_06_crossing_vehicle_001.resolved_v2.json",
+      "resolved_sha256": "c16476c051ca892d6ca616d6be5b34ca8f2f356c422fe0215efc78172fb0cebe",
+      "motion_qa": {
+        "crossing_actor": {
+          "max_abs_yaw_rate_deg_s": 0.0,
+          "max_abs_acceleration_mps2": 3.2460000000003824
+        }
+      },
+      "status": "requires_visual_acceptance"
+    },
+    {
+      "scenario_id": "smooth_07_ramp_merge_001",
+      "category": "merge",
+      "metric_actor_id": "merging_actor",
+      "event_start_s": 2.0,
+      "asset_keys": [
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "merging_actor"
+      ],
+      "critical_frames": [
+        0,
+        40,
+        80,
+        100,
+        120,
+        160,
+        200
+      ],
+      "spec": "outputs\\smooth_safety_suite_v1\\specs\\smooth_07_ramp_merge_001.scenario_v2.json",
+      "resolved": "outputs\\smooth_safety_suite_v1\\resolved\\smooth_07_ramp_merge_001.resolved_v2.json",
+      "resolved_sha256": "c7732fba40845e23f17d7d2a2a3158a740833541059a36fa6a7ca4140cbdb9b0",
+      "motion_qa": {
+        "merging_actor": {
+          "max_abs_yaw_rate_deg_s": 7.066543799999774,
+          "max_abs_acceleration_mps2": 0.0997972673826201
+        }
+      },
+      "status": "requires_visual_acceptance"
+    },
+    {
+      "scenario_id": "smooth_08_adversary_overtake_001",
+      "category": "adversary_overtake",
+      "metric_actor_id": "overtaking_actor",
+      "event_start_s": 3.0,
+      "asset_keys": [
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "overtaking_actor"
+      ],
+      "critical_frames": [
+        0,
+        40,
+        80,
+        100,
+        120,
+        160,
+        200
+      ],
+      "spec": "outputs\\smooth_safety_suite_v1\\specs\\smooth_08_adversary_overtake_001.scenario_v2.json",
+      "resolved": "outputs\\smooth_safety_suite_v1\\resolved\\smooth_08_adversary_overtake_001.resolved_v2.json",
+      "resolved_sha256": "3ecf08f46633651a770abf794c16c4f5a06b3013988a22f08868b3ae6cbb382b",
+      "motion_qa": {
+        "overtaking_actor": {
+          "max_abs_yaw_rate_deg_s": 14.93806259999964,
+          "max_abs_acceleration_mps2": 0.35006117949269233
+        }
+      },
+      "status": "requires_visual_acceptance"
+    },
+    {
+      "scenario_id": "smooth_09_hidden_reappearance_001",
+      "category": "partial_observability_reappearance",
+      "metric_actor_id": "persistent_target",
+      "event_start_s": 1.5,
+      "asset_keys": [
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "persistent_target",
+        "moving_occluder"
+      ],
+      "critical_frames": [
+        0,
+        40,
+        80,
+        100,
+        120,
+        160,
+        200
+      ],
+      "spec": "outputs\\smooth_safety_suite_v1\\specs\\smooth_09_hidden_reappearance_001.scenario_v2.json",
+      "resolved": "outputs\\smooth_safety_suite_v1\\resolved\\smooth_09_hidden_reappearance_001.resolved_v2.json",
+      "resolved_sha256": "4123db5367ec786925c2c5f532e3ad81798eda6405f4db2eec13407885cb70e4",
+      "motion_qa": {
+        "persistent_target": {
+          "max_abs_yaw_rate_deg_s": 0.0,
+          "max_abs_acceleration_mps2": 8.526512829121385e-12
+        },
+        "moving_occluder": {
+          "max_abs_yaw_rate_deg_s": 20.901213400000035,
+          "max_abs_acceleration_mps2": 0.4877243323591624
+        }
+      },
+      "status": "requires_visual_acceptance"
+    },
+    {
+      "scenario_id": "smooth_10_lead_plus_cutin_001",
+      "category": "multi_actor",
+      "metric_actor_id": "braking_lead",
+      "event_start_s": 2.0,
+      "asset_keys": [
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "braking_lead",
+        "secondary_cutin"
+      ],
+      "critical_frames": [
+        0,
+        40,
+        80,
+        100,
+        120,
+        160,
+        200
+      ],
+      "spec": "outputs\\smooth_safety_suite_v1\\specs\\smooth_10_lead_plus_cutin_001.scenario_v2.json",
+      "resolved": "outputs\\smooth_safety_suite_v1\\resolved\\smooth_10_lead_plus_cutin_001.resolved_v2.json",
+      "resolved_sha256": "1169300bda45ead8a93a1a20633217e5fa39ca332c70f16071a4d883cc8c65ff",
+      "motion_qa": {
+        "braking_lead": {
+          "max_abs_yaw_rate_deg_s": 0.0,
+          "max_abs_acceleration_mps2": 2.8078160000063965
+        },
+        "secondary_cutin": {
+          "max_abs_yaw_rate_deg_s": 20.333213000000185,
+          "max_abs_acceleration_mps2": 0.4058116882318267
+        }
+      },
+      "status": "requires_visual_acceptance"
+    }
+  ]
+}

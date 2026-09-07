@@ -50,6 +50,10 @@ from scenario_generator.schema.resolved_schema_v2 import (
 
 CARLA_ASSET_MAP = {
     "sedan.generic": "vehicle.audi.tt",
+    "vehicle.passenger_01": "vehicle.tesla.model3",
+    "vehicle.passenger_02": "vehicle.nissan.patrol_2021",
+    "vehicle.bus_01": "vehicle.mitsubishi.fusorosa",
+    "pedestrian.person_01": "walker.pedestrian.0001",
 }
 
 

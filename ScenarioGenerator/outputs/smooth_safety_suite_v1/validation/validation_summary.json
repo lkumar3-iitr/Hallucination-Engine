@@ -1,0 +1,10 @@
+{
+  "schema": "smooth_safety_suite_validation_v1",
+  "suite_id": "smooth_safety_suite_v1",
+  "status": "PASS",
+  "minimum_clearance_required_m": 0.5,
+  "pair_checks": 16,
+  "failed_checks": 0,
+  "failures": [],
+  "csv": "D:\\HallucinationEngine\\ScenarioGenerator\\outputs\\smooth_safety_suite_v1\\validation\\physical_clearance.csv"
+}

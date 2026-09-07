@@ -16,6 +16,10 @@
     {
       "key": "vehicle.passenger_02",
       "folder": "nissan_patrol_2021_native_full_v3",
+      "close_banks": {
+        "left": "../sprite_bank_cartesian_close_production/nissan_patrol_2021_cartesian_close_left_dense360_v1",
+        "right": "../sprite_bank_cartesian_close_production/nissan_patrol_2021_cartesian_close_right_dense360_v1"
+      },
       "aliases": [
         "nissan_patrol_2021"
       ]
@@ -23,6 +27,10 @@
     {
       "key": "vehicle.bus_01",
       "folder": "fuso_rosa_bus_native_full_v3",
+      "close_banks": {
+        "left": "../sprite_bank_cartesian_close_production/fuso_rosa_bus_cartesian_close_full_dense360_v1",
+        "right": "../sprite_bank_cartesian_close_production/fuso_rosa_bus_cartesian_close_full_dense360_v1"
+      },
       "aliases": [
         "fuso_rosa_bus"
       ]

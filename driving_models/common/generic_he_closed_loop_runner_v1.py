@@ -1019,6 +1019,26 @@ def sync_carla_scenario_actors(
                     lane_aligned_transform,
                 )
 
+            staged_spawn = False
+            if actor is None:
+                # Large actors such as the Fuso bus can be rejected at an
+                # otherwise valid resolved pose by CARLA's spawn-overlap
+                # check. Stage the kinematic actor well above the scene, then
+                # place it at the scenario-owned transform below.
+                staging_transform = carla.Transform(
+                    carla.Location(
+                        x=transform.location.x,
+                        y=transform.location.y,
+                        z=transform.location.z + 50.0,
+                    ),
+                    transform.rotation,
+                )
+                actor = world.try_spawn_actor(
+                    blueprint,
+                    staging_transform,
+                )
+                staged_spawn = actor is not None
+
             if actor is None:
                 raise RuntimeError(
                     "Could not spawn scenario actor "
@@ -1032,6 +1052,13 @@ def sync_carla_scenario_actors(
                 )
             except Exception:
                 pass
+
+            if staged_spawn:
+                print(
+                    "[CARLA scenario actor staged]",
+                    actor_id,
+                    "direct spawn rejected; using exact kinematic pose",
+                )
 
             actor_by_id[
                 actor_id

@@ -1,0 +1,28 @@
+{
+  "schema": "resolved_all_pairs_clearance_validation_v1",
+  "status": "PASS",
+  "scenario_id": "curated_multi_02_cutout_reveal_stopped_tesla_001",
+  "resolved_path": "D:\\HallucinationEngine\\important_curated_scenarios\\resolved\\curated_multi_02_cutout_reveal_stopped_tesla_001.resolved_v2.json",
+  "minimum_clearance": {
+    "frame_idx": 176,
+    "t_s": 8.8,
+    "pair": "cutout_patrol__stopped_tesla",
+    "clearance_m": 1.3331367448743618,
+    "overlaps": false
+  },
+  "pair_minimum_clearances": {
+    "cutout_patrol__stopped_tesla": {
+      "frame_idx": 176,
+      "t_s": 8.8,
+      "pair": "cutout_patrol__stopped_tesla",
+      "clearance_m": 1.3331367448743618,
+      "overlaps": false
+    }
+  },
+  "minimum_clearance_required_m": 1.0,
+  "minimum_bus_clearance_required_m": 1.5,
+  "include_ego": false,
+  "overlap_frame_count": 0,
+  "first_overlap": null,
+  "failures": []
+}

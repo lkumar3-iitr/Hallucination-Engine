@@ -1,0 +1,26 @@
+{
+  "schema": "scenario_environment_v1",
+  "scenario_id": "curated_long_route_dense_hardrain_001",
+  "weather_preset": "HardRainNoon",
+  "traffic_light_schedule": [
+    {
+      "kind": "route_context",
+      "route_progress_m": 118.0,
+      "state": "Red",
+      "start_s": 25.0,
+      "end_s": 34.0
+    },
+    {
+      "kind": "route_context",
+      "route_progress_m": 118.0,
+      "state": "Green",
+      "start_s": 34.0,
+      "end_s": 60.0
+    }
+  ],
+  "background_policy": {
+    "vehicles_follow_lane_when_moving": true,
+    "pedestrians_remain_on_sidewalk_except_metric_crossing": true,
+    "persistent_stopped_actors": true
+  }
+}

@@ -1,0 +1,246 @@
+{
+  "schema": "important_curated_multi_actor_suite_manifest_v1",
+  "suite_id": "important_curated_multi_actor_safety_critical_v1",
+  "fps": 20,
+  "duration_s": 20.0,
+  "scenario_count": 6,
+  "expected_outcome_counts": {
+    "collision_free": 6,
+    "collision_required": 0
+  },
+  "models": [
+    "tcp",
+    "neat",
+    "cilpp",
+    "aimmt"
+  ],
+  "conditions": [
+    "carla",
+    "he"
+  ],
+  "route_csv": "driving_models/common/outputs/town10_spawn10_to45_route_v1/route.csv",
+  "cases": [
+    {
+      "scenario_id": "curated_multi_01_lead_brake_adjacent_overtaker_001",
+      "category": "lead_brake_adjacent_overtaker",
+      "metric_actor_id": "lead_tesla",
+      "event_start_s": 5.5,
+      "event_source_start_s": 5.5,
+      "trigger_route_progress_m": null,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 20.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": true,
+        "conflict_point_timing": false,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "vehicle.passenger_02",
+        "vehicle.tesla.model3"
+      ],
+      "actor_ids": [
+        "lead_tesla",
+        "left_patrol"
+      ],
+      "semantic": "semantic\\curated_multi_01_lead_brake_adjacent_overtaker_001.semantic_v2.json",
+      "resolved": "..\\important_curated_scenarios\\resolved\\curated_multi_01_lead_brake_adjacent_overtaker_001.resolved_v2.json",
+      "resolved_sha256": "955e86d4f6ad87893ec42c8c05a704d7ab95ea181bd9151c76c850ac57d2d405",
+      "environment": "..\\important_curated_scenarios\\environment\\curated_multi_01_lead_brake_adjacent_overtaker_001.environment_v1.json",
+      "validation": "..\\important_curated_scenarios\\validation\\curated_multi_01_lead_brake_adjacent_overtaker_001.all_pairs_clearance_v1.json",
+      "status": "requires_visual_acceptance"
+    },
+    {
+      "scenario_id": "curated_multi_02_cutout_reveal_stopped_tesla_001",
+      "category": "cutout_reveal_stopped_hazard",
+      "metric_actor_id": "stopped_tesla",
+      "event_start_s": 6.0,
+      "event_source_start_s": 6.0,
+      "trigger_route_progress_m": null,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 20.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": true,
+        "conflict_point_timing": false,
+        "occlusion": true,
+        "comfort": true,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "vehicle.passenger_02",
+        "vehicle.tesla.model3"
+      ],
+      "actor_ids": [
+        "cutout_patrol",
+        "stopped_tesla"
+      ],
+      "semantic": "semantic\\curated_multi_02_cutout_reveal_stopped_tesla_001.semantic_v2.json",
+      "resolved": "..\\important_curated_scenarios\\resolved\\curated_multi_02_cutout_reveal_stopped_tesla_001.resolved_v2.json",
+      "resolved_sha256": "8e56a40add9d3917602e2340ae0b38909f61b877f29daa79424346ae28fd2b92",
+      "environment": "..\\important_curated_scenarios\\environment\\curated_multi_02_cutout_reveal_stopped_tesla_001.environment_v1.json",
+      "validation": "..\\important_curated_scenarios\\validation\\curated_multi_02_cutout_reveal_stopped_tesla_001.all_pairs_clearance_v1.json",
+      "status": "requires_visual_acceptance"
+    },
+    {
+      "scenario_id": "curated_multi_03_crossing_tesla_parked_bus_001",
+      "category": "crossing_vehicle_parked_bus_occluder",
+      "metric_actor_id": "crossing_tesla",
+      "event_start_s": 7.5,
+      "event_source_start_s": 7.5,
+      "trigger_route_progress_m": null,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 20.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": false,
+        "conflict_point_timing": true,
+        "occlusion": true,
+        "comfort": true,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "vehicle.bus_01",
+        "vehicle.tesla.model3"
+      ],
+      "actor_ids": [
+        "parked_bus",
+        "crossing_tesla"
+      ],
+      "semantic": "semantic\\curated_multi_03_crossing_tesla_parked_bus_001.semantic_v2.json",
+      "resolved": "..\\important_curated_scenarios\\resolved\\curated_multi_03_crossing_tesla_parked_bus_001.resolved_v2.json",
+      "resolved_sha256": "0884fa311fc49316485c31c56a45d8cddb78d2106b5281671855722399b618d2",
+      "environment": "..\\important_curated_scenarios\\environment\\curated_multi_03_crossing_tesla_parked_bus_001.environment_v1.json",
+      "validation": "..\\important_curated_scenarios\\validation\\curated_multi_03_crossing_tesla_parked_bus_001.all_pairs_clearance_v1.json",
+      "status": "requires_visual_acceptance"
+    },
+    {
+      "scenario_id": "curated_multi_04_offset_stopped_queue_001",
+      "category": "offset_stopped_queue",
+      "metric_actor_id": "queue_tail_tesla",
+      "event_start_s": 0.0,
+      "event_source_start_s": 0.0,
+      "trigger_route_progress_m": null,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 20.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": true,
+        "conflict_point_timing": false,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "vehicle.bus_01",
+        "vehicle.tesla.model3"
+      ],
+      "actor_ids": [
+        "queue_tail_tesla",
+        "queue_front_bus"
+      ],
+      "semantic": "semantic\\curated_multi_04_offset_stopped_queue_001.semantic_v2.json",
+      "resolved": "..\\important_curated_scenarios\\resolved\\curated_multi_04_offset_stopped_queue_001.resolved_v2.json",
+      "resolved_sha256": "864607d7018c52d47d88821e04a2470227c81667204169da23bc16462fb2bced",
+      "environment": "..\\important_curated_scenarios\\environment\\curated_multi_04_offset_stopped_queue_001.environment_v1.json",
+      "validation": "..\\important_curated_scenarios\\validation\\curated_multi_04_offset_stopped_queue_001.all_pairs_clearance_v1.json",
+      "status": "requires_visual_acceptance"
+    },
+    {
+      "scenario_id": "curated_multi_05_pedestrian_reveal_by_bus_001",
+      "category": "occluded_pedestrian_reveal",
+      "metric_actor_id": "crossing_pedestrian",
+      "event_start_s": 8.0,
+      "event_source_start_s": 8.0,
+      "trigger_route_progress_m": null,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 20.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": false,
+        "conflict_point_timing": true,
+        "occlusion": true,
+        "comfort": true,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "pedestrian.person_01",
+        "vehicle.bus_01"
+      ],
+      "actor_ids": [
+        "stopped_bus",
+        "crossing_pedestrian"
+      ],
+      "semantic": "semantic\\curated_multi_05_pedestrian_reveal_by_bus_001.semantic_v2.json",
+      "resolved": "..\\important_curated_scenarios\\resolved\\curated_multi_05_pedestrian_reveal_by_bus_001.resolved_v2.json",
+      "resolved_sha256": "c44f80894dc0e95e9a024065ad0ba05d8a16bdcfa0502a24b5480e27ef1d1a0e",
+      "environment": "..\\important_curated_scenarios\\environment\\curated_multi_05_pedestrian_reveal_by_bus_001.environment_v1.json",
+      "validation": "..\\important_curated_scenarios\\validation\\curated_multi_05_pedestrian_reveal_by_bus_001.all_pairs_clearance_v1.json",
+      "status": "requires_visual_acceptance"
+    },
+    {
+      "scenario_id": "curated_multi_06_lead_brake_left_cutin_001",
+      "category": "compound_cutin_with_lead",
+      "metric_actor_id": "lead_patrol",
+      "event_start_s": 5.5,
+      "event_source_start_s": 5.5,
+      "trigger_route_progress_m": null,
+      "pre_trigger_source_frame": null,
+      "expected_outcome": "collision_free",
+      "duration_s": 20.0,
+      "fps": 20,
+      "metric_applicability": {
+        "collision": true,
+        "physical_clearance": true,
+        "braking_response": true,
+        "trajectory_tracking": true,
+        "route_ttc": true,
+        "conflict_point_timing": false,
+        "occlusion": false,
+        "comfort": true,
+        "renderer_continuity": true
+      },
+      "asset_keys": [
+        "vehicle.passenger_02",
+        "vehicle.tesla.model3"
+      ],
+      "actor_ids": [
+        "lead_patrol",
+        "left_cutin_tesla"
+      ],
+      "semantic": "semantic\\curated_multi_06_lead_brake_left_cutin_001.semantic_v2.json",
+      "resolved": "..\\important_curated_scenarios\\resolved\\curated_multi_06_lead_brake_left_cutin_001.resolved_v2.json",
+      "resolved_sha256": "5446943576b81e675240bd4e9f93e493a10acffb737ed7f6ff994b954ad4e59c",
+      "environment": "..\\important_curated_scenarios\\environment\\curated_multi_06_lead_brake_left_cutin_001.environment_v1.json",
+      "validation": "..\\important_curated_scenarios\\validation\\curated_multi_06_lead_brake_left_cutin_001.all_pairs_clearance_v1.json",
+      "status": "requires_visual_acceptance"
+    }
+  ]
+}

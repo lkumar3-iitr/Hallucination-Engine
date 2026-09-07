@@ -1,0 +1,91 @@
+{
+  "schema": "resolved_all_pairs_clearance_validation_v1",
+  "status": "PASS",
+  "scenario_id": "curated_oncoming_close_all_assets_400",
+  "resolved_path": "D:\\HallucinationEngine\\important_curated_scenarios\\resolved\\curated_oncoming_close_all_assets_400.resolved_v2.json",
+  "minimum_clearance": {
+    "frame_idx": 295,
+    "t_s": 14.75,
+    "pair": "ego__oncoming_bus",
+    "clearance_m": 1.196274998664855,
+    "overlaps": false
+  },
+  "pair_minimum_clearances": {
+    "ego__oncoming_bus": {
+      "frame_idx": 295,
+      "t_s": 14.75,
+      "pair": "ego__oncoming_bus",
+      "clearance_m": 1.196274998664855,
+      "overlaps": false
+    },
+    "ego__oncoming_patrol": {
+      "frame_idx": 190,
+      "t_s": 9.5,
+      "pair": "ego__oncoming_patrol",
+      "clearance_m": 2.093274998664856,
+      "overlaps": false
+    },
+    "ego__oncoming_pedestrian": {
+      "frame_idx": 85,
+      "t_s": 4.25,
+      "pair": "ego__oncoming_pedestrian",
+      "clearance_m": 6.230774998664856,
+      "overlaps": false
+    },
+    "ego__oncoming_tesla": {
+      "frame_idx": 81,
+      "t_s": 4.05,
+      "pair": "ego__oncoming_tesla",
+      "clearance_m": 2.086774998664856,
+      "overlaps": false
+    },
+    "oncoming_bus__oncoming_patrol": {
+      "frame_idx": 0,
+      "t_s": 0.0,
+      "pair": "oncoming_bus__oncoming_patrol",
+      "clearance_m": 47.08049999999999,
+      "overlaps": false
+    },
+    "oncoming_bus__oncoming_pedestrian": {
+      "frame_idx": 400,
+      "t_s": 20.0,
+      "pair": "oncoming_bus__oncoming_pedestrian",
+      "clearance_m": 49.687968022953,
+      "overlaps": false
+    },
+    "oncoming_bus__oncoming_tesla": {
+      "frame_idx": 0,
+      "t_s": 0.0,
+      "pair": "oncoming_bus__oncoming_tesla",
+      "clearance_m": 102.46749999999999,
+      "overlaps": false
+    },
+    "oncoming_patrol__oncoming_pedestrian": {
+      "frame_idx": 384,
+      "t_s": 19.2,
+      "pair": "oncoming_patrol__oncoming_pedestrian",
+      "clearance_m": 1.9874999999999998,
+      "overlaps": false
+    },
+    "oncoming_patrol__oncoming_tesla": {
+      "frame_idx": 0,
+      "t_s": 0.0,
+      "pair": "oncoming_patrol__oncoming_tesla",
+      "clearance_m": 49.821,
+      "overlaps": false
+    },
+    "oncoming_pedestrian__oncoming_tesla": {
+      "frame_idx": 71,
+      "t_s": 3.55,
+      "pair": "oncoming_pedestrian__oncoming_tesla",
+      "clearance_m": 1.9809999999999999,
+      "overlaps": false
+    }
+  },
+  "minimum_clearance_required_m": 1.0,
+  "minimum_bus_clearance_required_m": 1.0,
+  "include_ego": true,
+  "overlap_frame_count": 0,
+  "first_overlap": null,
+  "failures": []
+}

@@ -156,6 +156,11 @@ class ExecutionActorState:
 
     he_view_matrix_csv: Path
 
+    he_close_view_matrix_csvs: Dict[
+        str,
+        Path,
+    ]
+
     physical_dimensions: Optional[
         RuntimeDimensions
     ]
@@ -189,6 +194,9 @@ class ExecutionActorState:
     world_vy_mps: float
 
     speed_mps: float
+
+    # Actor-transform origin height above the physical support plane.
+    ground_origin_offset_m: float = 0.0
 
 
 # ============================================================
@@ -446,6 +454,18 @@ def bound_actor_to_execution_state(
             state.yaw_deg,
     )
 
+    physical_bbox = actor.asset.physical_bbox
+    support_offset_m = (
+        0.0
+        if physical_bbox is None
+        else -float(physical_bbox.local_bottom_z_m)
+    )
+    clearance_m = (
+        0.05
+        if str(actor.scenario_info.actor_type).strip().lower() == "vehicle"
+        else 0.0
+    )
+
     return ExecutionActorState(
         frame_idx=
             state.frame_idx,
@@ -473,6 +493,11 @@ def bound_actor_to_execution_state(
 
         he_view_matrix_csv=
             actor.asset.view_matrix_csv,
+
+        he_close_view_matrix_csvs=
+            dict(
+                actor.asset.close_view_matrix_csvs
+            ),
 
         physical_dimensions=
             actor.resolved_physical_dimensions,
@@ -504,16 +529,18 @@ def bound_actor_to_execution_state(
         # ----------------------------------------------------
         # IMPORTANT
         #
-        # This is only the reference/world-origin Z.
-        #
-        # CARLA-specific road snapping belongs in the CARLA
-        # realization backend, NOT here.
+        # Asset transforms do not all use the support plane as their
+        # origin. In particular, CARLA walker origins are at body center.
+        # Raise the actor origin by -local_bottom_z so its physical support
+        # plane coincides with the road plane in both HE and CARLA.
         # ----------------------------------------------------
 
         world_z_m=
             float(
                 origin.z_m
-            ),
+            )
+            + support_offset_m
+            + clearance_m,
 
         world_yaw_deg=
             world_yaw,
@@ -526,6 +553,9 @@ def bound_actor_to_execution_state(
 
         speed_mps=
             state.speed_mps,
+
+        ground_origin_offset_m=
+            support_offset_m + clearance_m,
     )
 
 

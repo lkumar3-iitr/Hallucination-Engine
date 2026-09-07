@@ -177,6 +177,14 @@ def _default_z_offset_m(
     return 0.0
 
 
+def _asset_support_offset_m(execution, actor_id: str) -> float:
+    asset = execution.binder.asset_for_actor(actor_id)
+    physical_bbox = asset.physical_bbox
+    if physical_bbox is None:
+        return 0.0
+    return -float(physical_bbox.local_bottom_z_m)
+
+
 def resolve_actor_ground_z(
     world,
     actor_state: ExecutionActorState,
@@ -289,11 +297,12 @@ def resolve_actor_ground_z(
             actor_state.world_z_m
         )
 
-    return (
-        base_z
-        +
-        z_offset_m
-    )
+    if waypoint is None:
+        return base_z
+
+    return base_z + _asset_support_offset_m(
+        execution, actor_state.actor_id
+    ) + z_offset_m
 
 
 # ============================================================

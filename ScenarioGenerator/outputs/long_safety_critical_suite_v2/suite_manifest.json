@@ -1,0 +1,206 @@
+{
+  "schema": "long_safety_critical_suite_manifest_v2",
+  "suite_id": "long_safety_critical_suite_v2_triggered",
+  "fps": 20,
+  "duration_s": 40.0,
+  "scenario_count": 10,
+  "models": [
+    "tcp",
+    "neat"
+  ],
+  "conditions": [
+    "carla",
+    "he"
+  ],
+  "route_csv": "driving_models\\common\\outputs\\town10_spawn10_to45_route_v1\\route.csv",
+  "cases": [
+    {
+      "scenario_id": "long_01_signalized_lead_turn_001",
+      "category": "signalized_lead_follow",
+      "metric_actor_id": "lead_tesla",
+      "event_start_s": 23.75,
+      "event_source_start_s": 23.75,
+      "trigger_route_progress_m": null,
+      "asset_keys": [
+        "vehicle.passenger_01"
+      ],
+      "actor_ids": [
+        "lead_tesla"
+      ],
+      "resolved": "outputs\\long_safety_critical_suite_v2\\resolved\\long_01_signalized_lead_turn_001.resolved_v2.json",
+      "resolved_sha256": "0f7b1a96b23266263210c5aa146efb6a6966e014e4c4df7c0afd2e396eb172d8",
+      "environment": "outputs\\long_safety_critical_suite_v2\\environment\\long_01_signalized_lead_turn_001.environment_v1.json",
+      "status": "requires_execution_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "long_02_close_lead_emergency_brake_001",
+      "category": "lead_emergency_brake",
+      "metric_actor_id": "lead_nissan",
+      "event_start_s": 11.0,
+      "event_source_start_s": 11.0,
+      "trigger_route_progress_m": 60.0,
+      "asset_keys": [
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "lead_nissan"
+      ],
+      "resolved": "outputs\\long_safety_critical_suite_v2\\resolved\\long_02_close_lead_emergency_brake_001.resolved_v2.json",
+      "resolved_sha256": "b6e2936431321366776943c3f9ee942cda05ebf03a984c68879efbbb44dd76da",
+      "environment": "outputs\\long_safety_critical_suite_v2\\environment\\long_02_close_lead_emergency_brake_001.environment_v1.json",
+      "status": "requires_execution_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "long_03_close_cutin_brake_001",
+      "category": "cutin_then_brake",
+      "metric_actor_id": "cutin_tesla",
+      "event_start_s": 10.0,
+      "event_source_start_s": 10.0,
+      "trigger_route_progress_m": 55.0,
+      "asset_keys": [
+        "vehicle.passenger_01"
+      ],
+      "actor_ids": [
+        "cutin_tesla"
+      ],
+      "resolved": "outputs\\long_safety_critical_suite_v2\\resolved\\long_03_close_cutin_brake_001.resolved_v2.json",
+      "resolved_sha256": "f242efd2d77fe98aa07e2645c6684357fbd330c0115a6d3be174357643981659",
+      "environment": "outputs\\long_safety_critical_suite_v2\\environment\\long_03_close_cutin_brake_001.environment_v1.json",
+      "status": "requires_execution_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "long_04_bus_cutout_reveal_stop_001",
+      "category": "partial_observability_cutout",
+      "metric_actor_id": "hidden_nissan",
+      "event_start_s": 11.0,
+      "event_source_start_s": 11.0,
+      "trigger_route_progress_m": 50.0,
+      "asset_keys": [
+        "vehicle.bus_01",
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "cutout_bus",
+        "hidden_nissan"
+      ],
+      "resolved": "outputs\\long_safety_critical_suite_v2\\resolved\\long_04_bus_cutout_reveal_stop_001.resolved_v2.json",
+      "resolved_sha256": "c3538688201fd7cf49394945c988bfb936434bb71d135b724dd85f11614d5e22",
+      "environment": "outputs\\long_safety_critical_suite_v2\\environment\\long_04_bus_cutout_reveal_stop_001.environment_v1.json",
+      "status": "requires_execution_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "long_05_crossing_nissan_001",
+      "category": "crossing_vehicle",
+      "metric_actor_id": "crossing_nissan",
+      "event_start_s": 11.0,
+      "event_source_start_s": 11.0,
+      "trigger_route_progress_m": 59.0,
+      "asset_keys": [
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "crossing_nissan"
+      ],
+      "resolved": "outputs\\long_safety_critical_suite_v2\\resolved\\long_05_crossing_nissan_001.resolved_v2.json",
+      "resolved_sha256": "f1971896ae1c0ff12881facc551e77d9456661d2dda4e04e19af674e2290261c",
+      "environment": "outputs\\long_safety_critical_suite_v2\\environment\\long_05_crossing_nissan_001.environment_v1.json",
+      "status": "requires_execution_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "long_06_crossing_bus_001",
+      "category": "crossing_bus",
+      "metric_actor_id": "crossing_bus",
+      "event_start_s": 12.0,
+      "event_source_start_s": 12.0,
+      "trigger_route_progress_m": 63.0,
+      "asset_keys": [
+        "vehicle.bus_01"
+      ],
+      "actor_ids": [
+        "crossing_bus"
+      ],
+      "resolved": "outputs\\long_safety_critical_suite_v2\\resolved\\long_06_crossing_bus_001.resolved_v2.json",
+      "resolved_sha256": "5a9de3f9b218eb3a2be9f29c7009ae35f297e3f1a3944c0165bbe729381f7a21",
+      "environment": "outputs\\long_safety_critical_suite_v2\\environment\\long_06_crossing_bus_001.environment_v1.json",
+      "status": "requires_execution_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "long_07_pedestrian_emergence_001",
+      "category": "pedestrian_crossing",
+      "metric_actor_id": "crossing_pedestrian",
+      "event_start_s": 11.5,
+      "event_source_start_s": 11.5,
+      "trigger_route_progress_m": 57.0,
+      "asset_keys": [
+        "pedestrian.person_01"
+      ],
+      "actor_ids": [
+        "crossing_pedestrian"
+      ],
+      "resolved": "outputs\\long_safety_critical_suite_v2\\resolved\\long_07_pedestrian_emergence_001.resolved_v2.json",
+      "resolved_sha256": "afcd1efcdc0c81a9503e96806380cea9e0fb411c7e7ff0d1720e91749e2743b3",
+      "environment": "outputs\\long_safety_critical_suite_v2\\environment\\long_07_pedestrian_emergence_001.environment_v1.json",
+      "status": "requires_execution_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "long_08_bus_occluded_pedestrian_001",
+      "category": "occluded_pedestrian",
+      "metric_actor_id": "hidden_pedestrian",
+      "event_start_s": 12.0,
+      "event_source_start_s": 12.0,
+      "trigger_route_progress_m": 55.0,
+      "asset_keys": [
+        "pedestrian.person_01",
+        "vehicle.bus_01"
+      ],
+      "actor_ids": [
+        "parked_bus",
+        "hidden_pedestrian"
+      ],
+      "resolved": "outputs\\long_safety_critical_suite_v2\\resolved\\long_08_bus_occluded_pedestrian_001.resolved_v2.json",
+      "resolved_sha256": "39026330d2b4055b44009fbabddbfbc6e7d2693a664b552d78ca46c51a33fc41",
+      "environment": "outputs\\long_safety_critical_suite_v2\\environment\\long_08_bus_occluded_pedestrian_001.environment_v1.json",
+      "status": "requires_execution_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "long_09_stopped_queue_multi_actor_001",
+      "category": "stopped_queue",
+      "metric_actor_id": "queue_tail",
+      "event_start_s": 10.5,
+      "event_source_start_s": 10.5,
+      "trigger_route_progress_m": 57.0,
+      "asset_keys": [
+        "vehicle.bus_01",
+        "vehicle.passenger_01"
+      ],
+      "actor_ids": [
+        "queue_tail",
+        "queue_front"
+      ],
+      "resolved": "outputs\\long_safety_critical_suite_v2\\resolved\\long_09_stopped_queue_multi_actor_001.resolved_v2.json",
+      "resolved_sha256": "cfa1c33be1889a68b3d2030be72800f7af3892b0c021068bcfb023305fbedf7e",
+      "environment": "outputs\\long_safety_critical_suite_v2\\environment\\long_09_stopped_queue_multi_actor_001.environment_v1.json",
+      "status": "requires_execution_and_visual_acceptance"
+    },
+    {
+      "scenario_id": "long_10_lead_brake_pedestrian_001",
+      "category": "multi_actor_compound",
+      "metric_actor_id": "lead_nissan",
+      "event_start_s": 10.5,
+      "event_source_start_s": 10.5,
+      "trigger_route_progress_m": 58.0,
+      "asset_keys": [
+        "pedestrian.person_01",
+        "vehicle.passenger_02"
+      ],
+      "actor_ids": [
+        "lead_nissan",
+        "side_pedestrian"
+      ],
+      "resolved": "outputs\\long_safety_critical_suite_v2\\resolved\\long_10_lead_brake_pedestrian_001.resolved_v2.json",
+      "resolved_sha256": "5e3695bf71e7f462cb304ef4805bef913f187c2eaacac7f11fbac320be2fb3ca",
+      "environment": "outputs\\long_safety_critical_suite_v2\\environment\\long_10_lead_brake_pedestrian_001.environment_v1.json",
+      "status": "requires_execution_and_visual_acceptance"
+    }
+  ]
+}

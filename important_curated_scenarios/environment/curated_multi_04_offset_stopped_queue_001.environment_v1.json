@@ -1,0 +1,5 @@
+{
+  "schema": "scenario_environment_v1",
+  "scenario_id": "curated_multi_04_offset_stopped_queue_001",
+  "weather_preset": "ClearNoon"
+}

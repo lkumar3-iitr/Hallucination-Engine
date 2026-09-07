@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "scenario_id": "left_cutin_stop_resume_left_stop_clear",
+  "town": "Town10HD_Opt",
+  "route": {
+    "spawn_index": 10,
+    "destination_index": 45,
+    "route_csv": "D:\\HallucinationEngine\\driving_models\\common\\outputs\\town10_spawn10_to45_route_v1\\route.csv"
+  },
+  "weather": {
+    "preset": "ClearNoon"
+  }
+}

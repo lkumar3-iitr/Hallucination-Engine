@@ -1,0 +1,28 @@
+{
+  "schema": "resolved_all_pairs_clearance_validation_v1",
+  "status": "PASS",
+  "scenario_id": "curated_multi_01_lead_brake_adjacent_overtaker_001",
+  "resolved_path": "D:\\HallucinationEngine\\important_curated_scenarios\\resolved\\curated_multi_01_lead_brake_adjacent_overtaker_001.resolved_v2.json",
+  "minimum_clearance": {
+    "frame_idx": 306,
+    "t_s": 15.3,
+    "pair": "lead_tesla__left_patrol",
+    "clearance_m": 1.3435,
+    "overlaps": false
+  },
+  "pair_minimum_clearances": {
+    "lead_tesla__left_patrol": {
+      "frame_idx": 306,
+      "t_s": 15.3,
+      "pair": "lead_tesla__left_patrol",
+      "clearance_m": 1.3435,
+      "overlaps": false
+    }
+  },
+  "minimum_clearance_required_m": 1.0,
+  "minimum_bus_clearance_required_m": 1.5,
+  "include_ego": false,
+  "overlap_frame_count": 0,
+  "first_overlap": null,
+  "failures": []
+}

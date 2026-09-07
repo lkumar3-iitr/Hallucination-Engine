@@ -1,0 +1,5 @@
+{
+  "schema": "scenario_environment_v1",
+  "scenario_id": "curated_multi_05_pedestrian_reveal_by_bus_001",
+  "weather_preset": "ClearNoon"
+}

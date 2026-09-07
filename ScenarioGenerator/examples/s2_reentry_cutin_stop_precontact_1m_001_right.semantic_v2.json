@@ -1,0 +1,80 @@
+{
+  "scenario_id": "s2_reentry_cutin_stop_precontact_1m_001_right_semantic",
+  "description": "Vehicle starts ahead in the ego lane, moves to the right adjacent lane, stops and waits for the canonical ego to pass, accelerates until it has a footprint-safe lead, overtakes on the right, re-enters the ego lane, then performs a hard stop. The scenario ends at the last 20 Hz frame above the 1.0 m pre-contact guard, with approximately 1.05 m physical rectangle clearance between the stopped Nissan Patrol and the canonical Tesla Model 3 ego.",
+  "duration_s": 17.55,
+  "fps": 20,
+  "seed": 0,
+  "lane_width_m": 3.5,
+  "ego_speed_mps": 4.0,
+  "actors": [
+    {
+      "actor_id": "adv_reentry",
+      "actor_type": "vehicle",
+      "role": "adversary",
+      "asset_key": "vehicle.passenger_02",
+      "longitudinal_offset_m": 12.0,
+      "behavior": {
+        "initial_lane": "ego_lane",
+        "initial_speed_mps": 3.0,
+        "end_behavior": "hold",
+        "steps": [
+          {
+            "action": "cruise",
+            "duration_s": 3.5,
+            "speed_mps": 3.0
+          },
+          {
+            "action": "lane_change",
+            "target_lane": "right_adjacent",
+            "duration_s": 3.0
+          },
+          {
+            "action": "brake_to",
+            "target_speed_mps": 0.0,
+            "deceleration_mps2": 3.0
+          },
+          {
+            "action": "hold_until",
+            "condition": {
+              "kind": "relative_longitudinal",
+              "subject_id": "ego",
+              "reference_id": "adv_reentry",
+              "relation": "ahead_by",
+              "margin_m": 2.0
+            }
+          },
+          {
+            "action": "accelerate_to",
+            "target_speed_mps": 9.0,
+            "acceleration_mps2": 4.0
+          },
+          {
+            "action": "cruise_until",
+            "speed_mps": 9.0,
+            "condition": {
+              "kind": "relative_longitudinal",
+              "subject_id": "adv_reentry",
+              "reference_id": "ego",
+              "relation": "ahead_by",
+              "margin_m": 6.2
+            }
+          },
+          {
+            "action": "lane_change",
+            "target_lane": "ego_lane",
+            "duration_s": 1.5
+          },
+          {
+            "action": "brake_to",
+            "target_speed_mps": 0.0,
+            "deceleration_mps2": 6.0
+          },
+          {
+            "action": "hold",
+            "duration_s": 3.0
+          }
+        ]
+      }
+    }
+  ]
+}

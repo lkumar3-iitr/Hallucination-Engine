@@ -43,3 +43,29 @@ roll  = 0.0
 ```
 
 Camera mismatch was the main issue in earlier output. Treat this convention as fixed for v2 data generation, training, validation, and compositor integration.
+
+## Pre-contact validation
+
+Semantic event margins such as `ahead_by` compare actor and ego reference
+points; they are not bumper-to-bumper distances. A resolved benchmark must
+therefore be checked with the physical actor footprints before export.
+
+The pre-contact re-entry example is:
+
+```text
+examples/s2_reentry_cutin_stop_precontact_1m_001_right.semantic_v2.json
+```
+
+Resolve and validate it from the `ScenarioGenerator` directory:
+
+```powershell
+python scripts/resolve_schema_v2.py examples/s2_reentry_cutin_stop_precontact_1m_001_right.semantic_v2.json --semantic --output outputs/v2_resolved/s2_reentry_cutin_stop_precontact_1m_001_right.resolved_v2.json
+python scripts/validate_schema_v2.py outputs/v2_resolved/s2_reentry_cutin_stop_precontact_1m_001_right.resolved_v2.json
+python scripts/validate_resolved_clearance_v1.py outputs/v2_resolved/s2_reentry_cutin_stop_precontact_1m_001_right.resolved_v2.json --asset-root <sprite-bank-root> --actor-id adv_reentry --minimum-clearance-m 1.0 --minimum-terminal-clearance-m 1.0 --output outputs/validation/s2_reentry_cutin_stop_precontact_1m_001_right.clearance_v1.json
+```
+
+`validate_resolved_clearance_v1.py` uses oriented physical rectangles and
+fails if any common frame overlaps or falls below the requested clearance.
+This validates the canonical resolved trajectory. Closed-loop model runs must
+still record their own physical separation and termination reason because a
+learned ego trajectory can depart from the canonical path.

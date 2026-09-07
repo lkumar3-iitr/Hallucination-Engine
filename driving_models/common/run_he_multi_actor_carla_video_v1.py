@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import queue
 from pathlib import Path
 
@@ -208,6 +209,31 @@ def build_execution_origin(
         z_m=road_z,
         yaw_deg=float(
             ego0_tf.rotation.yaw
+        ),
+    )
+
+
+def resolved_ego_transform(ego_frame, origin, ego_z_m):
+    """Convert one ScenarioGenerator ego-initial pose into CARLA world space."""
+    origin_yaw_rad = math.radians(float(origin.yaw_deg))
+    forward_x = math.cos(origin_yaw_rad)
+    forward_y = math.sin(origin_yaw_rad)
+    left_x = -forward_y
+    left_y = forward_x
+
+    x_m = float(ego_frame["x_m"])
+    y_m = float(ego_frame["y_m"])
+
+    return carla.Transform(
+        carla.Location(
+            x=float(origin.x_m) + x_m * forward_x + y_m * left_x,
+            y=float(origin.y_m) + x_m * forward_y + y_m * left_y,
+            z=float(ego_z_m),
+        ),
+        carla.Rotation(
+            pitch=0.0,
+            yaw=float(origin.yaw_deg) + float(ego_frame["yaw_deg"]),
+            roll=0.0,
         ),
     )
 
@@ -526,6 +552,16 @@ def main():
         default=5,
     )
 
+    parser.add_argument(
+        "--ego-motion",
+        choices=["frozen", "resolved"],
+        default="frozen",
+        help=(
+            "Keep the legacy visual-smoke ego fixed, or apply the exact "
+            "ResolvedScenarioV2 ego pose on every frame."
+        ),
+    )
+
     # --------------------------------------------------------
     # Camera
     #
@@ -618,6 +654,14 @@ def main():
     resolved_path = Path(
         args.resolved
     ).resolve()
+
+    with resolved_path.open("r", encoding="utf-8") as handle:
+        resolved_document = json.load(handle)
+
+    resolved_ego_frames = {
+        int(frame["frame_idx"]): frame
+        for frame in resolved_document.get("ego_frames", [])
+    }
 
     asset_root = Path(
         args.asset_root
@@ -1076,7 +1120,20 @@ def main():
                 end_frame + 1,
             )
         ):
-            # Keep ego frozen only for this generic visual smoke.
+            if args.ego_motion == "resolved":
+                ego_frame = resolved_ego_frames.get(int(scenario_frame))
+                if ego_frame is None:
+                    raise RuntimeError(
+                        f"Resolved ego frame {scenario_frame} is missing."
+                    )
+                ego.set_transform(
+                    resolved_ego_transform(
+                        ego_frame=ego_frame,
+                        origin=origin,
+                        ego_z_m=ego0_tf.location.z,
+                    )
+                )
+
             ego.apply_control(
                 hold_control
             )
