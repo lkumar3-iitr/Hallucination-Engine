@@ -3,11 +3,35 @@ import unittest
 import carla
 import numpy as np
 
-from he_renderer.renderer import aimed_camera, camera_rotation_map, reproject_sprite
+from he_renderer.renderer import (
+    aimed_camera,
+    camera_rotation_map,
+    reproject_sprite,
+    reproject_sprite_reference,
+)
 from he_renderer.selector import iou_scores, packed_iou_scores, project, relative_matrix
 
 
 class SidePassTests(unittest.TestCase):
+    def test_compiled_reprojection_matches_reference_visibility(self):
+        rng = np.random.default_rng(20260908)
+        background = rng.integers(0, 256, (72, 128, 3), dtype=np.uint8)
+        sprite = rng.integers(0, 256, (31, 53, 4), dtype=np.uint8)
+        sprite[:, :, 3] = np.where(sprite[:, :, 3] > 90, sprite[:, :, 3], 0)
+        box = [-8.25, 11.5, 102.75, 68.25]
+        matrix = np.array([[1, .04, -3], [-.02, 1, 2], [8e-5, -5e-5, 1.]])
+
+        expected_rgb, expected_alpha = reproject_sprite_reference(
+            background, sprite, box, matrix
+        )
+        actual_rgb, actual_alpha = reproject_sprite(background, sprite, box, matrix)
+
+        np.testing.assert_array_equal(actual_alpha > .04, expected_alpha > .04)
+        self.assertLessEqual(float(np.max(np.abs(actual_alpha-expected_alpha))), 1/255)
+        self.assertLessEqual(
+            int(np.max(np.abs(actual_rgb.astype(np.int16)-expected_rgb.astype(np.int16)))), 2
+        )
+
     def test_packed_iou_matches_boolean_iou(self):
         rng = np.random.default_rng(20260908)
         masks = rng.random((37, 128, 128)) < 0.31

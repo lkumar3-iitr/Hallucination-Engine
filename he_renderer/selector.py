@@ -61,10 +61,12 @@ def iou_scores(masks, target):
     return intersections / np.maximum(unions, 1)
 
 
-def packed_iou_scores(packed_masks, target):
+def packed_iou_scores(packed_masks, target, mask_areas=None):
     packed_target = np.packbits(target, axis=None)
     intersections = POPCOUNT_U8[np.bitwise_and(packed_masks, packed_target)].sum(axis=1)
-    unions = POPCOUNT_U8[np.bitwise_or(packed_masks, packed_target)].sum(axis=1)
+    if mask_areas is None:
+        mask_areas = POPCOUNT_U8[packed_masks].sum(axis=1)
+    unions = mask_areas + int(np.count_nonzero(target)) - intersections
     return intersections / np.maximum(unions, 1)
 
 
@@ -130,6 +132,7 @@ class Selector:
                                    for i in range(len(self.rows))])
             np.savez_compressed(cache, masks=self.masks)
         self.packed_masks = np.packbits(self.masks.reshape((len(self.masks), -1)), axis=1)
+        self.mask_areas = np.count_nonzero(self.masks, axis=(1, 2)).astype(np.int32)
         bbox = self.metadata["physical_bbox"]
         self.center = np.array([bbox[f"local_center_{a}_m"] for a in "xyz"])
         self.extents = np.array([bbox[f"extent_{a}_m"] for a in "xyz"])
@@ -240,7 +243,9 @@ class Selector:
         angle_delta = np.abs((self.keys[:, 0]-query[0]+180) % 360-180)
         # Silhouettes alone confuse opposite sides; enforce physically compatible appearance.
         eligible_indices = np.flatnonzero(angle_delta <= 35)
-        scores = packed_iou_scores(self.packed_masks[eligible_indices], predicted)
+        scores = packed_iou_scores(
+            self.packed_masks[eligible_indices], predicted, self.mask_areas[eligible_indices]
+        )
         ranked = scores - 0.002*(angle_delta[eligible_indices]/35)**2
         local_selected = int(np.argmax(ranked))
         selected = int(eligible_indices[local_selected])

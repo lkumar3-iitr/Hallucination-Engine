@@ -59,8 +59,8 @@ def camera_rotation_map(source_camera, target_camera, width, height, fov):
     return k @ axes @ rs.T @ rt @ axes.T @ np.linalg.inv(k)
 
 
-def reproject_sprite(background, sprite, box, target_to_source):
-    """Inverse sample visible rays, including objects crossing the target camera plane."""
+def reproject_sprite_reference(background, sprite, box, target_to_source):
+    """Reference inverse sampler retained as an equivalence oracle."""
     ys, xs = np.where(sprite[:, :, 3] > 10)
     if not len(xs):
         raise ValueError("Empty source sprite")
@@ -87,10 +87,83 @@ def reproject_sprite(background, sprite, box, target_to_source):
     return result, a
 
 
+def reproject_sprite(background, sprite, box, target_to_source):
+    """Inverse sample only the conservative visible destination region."""
+    ys, xs = np.where(sprite[:, :, 3] > 10)
+    if not len(xs):
+        raise ValueError("Empty source sprite")
+    crop = sprite[ys.min():ys.max()+1, xs.min():xs.max()+1]
+    x1, y1, x2, y2 = map(float, box)
+    if not np.all(np.isfinite(box)) or x2 <= x1 or y2 <= y1:
+        raise ValueError("Invalid full source-camera box")
+
+    h, w = background.shape[:2]
+    source_to_target = np.linalg.inv(target_to_source)
+    polygon = [
+        np.array([x1, y1]), np.array([x2, y1]),
+        np.array([x2, y2]), np.array([x1, y2]),
+    ]
+
+    # A source point maps to a valid front-facing target ray only when the
+    # homogeneous denominator of the inverse homography is positive.
+    def denominator(point):
+        return float(source_to_target[2] @ np.r_[point, 1.0])
+
+    clipped = []
+    for start, end in zip(polygon, polygon[1:] + polygon[:1]):
+        start_d, end_d = denominator(start), denominator(end)
+        start_inside, end_inside = start_d > 1e-9, end_d > 1e-9
+        if start_inside:
+            clipped.append(start)
+        if start_inside != end_inside:
+            t = (1e-9-start_d)/(end_d-start_d)
+            clipped.append(start+t*(end-start))
+
+    result = background.copy()
+    alpha_canvas = np.zeros((h, w), np.float32)
+    if not clipped:
+        return result, alpha_canvas
+
+    source_points = np.column_stack((np.asarray(clipped), np.ones(len(clipped))))
+    target_h = source_points @ source_to_target.T
+    target_points = target_h[:, :2]/target_h[:, 2:3]
+    finite = target_points[np.all(np.isfinite(target_points), axis=1)]
+    if not len(finite):
+        return result, alpha_canvas
+    left = max(0, int(np.floor(finite[:, 0].min()))-2)
+    right = min(w, int(np.ceil(finite[:, 0].max()))+3)
+    top = max(0, int(np.floor(finite[:, 1].min()))-2)
+    bottom = min(h, int(np.ceil(finite[:, 1].max()))+3)
+    if right <= left or bottom <= top:
+        return result, alpha_canvas
+
+    y, x = np.ogrid[top:bottom, left:right]
+    matrix = target_to_source
+    depth = matrix[2, 0]*x + matrix[2, 1]*y + matrix[2, 2]
+    valid = depth > 1e-6
+    safe = np.where(valid, depth, 1)
+    u = (matrix[0, 0]*x+matrix[0, 1]*y+matrix[0, 2])/safe
+    v = (matrix[1, 0]*x+matrix[1, 1]*y+matrix[1, 2])/safe
+    valid &= (u >= x1) & (u < x2) & (v >= y1) & (v < y2)
+    map_x = np.where(valid, (u-x1+.5)*crop.shape[1]/(x2-x1)-.5, -1).astype(np.float32)
+    map_y = np.where(valid, (v-y1+.5)*crop.shape[0]/(y2-y1)-.5, -1).astype(np.float32)
+    alpha = crop[:, :, 3:4].astype(np.float32)/255
+    premultiplied = np.concatenate((crop[:, :, :3].astype(np.float32)*alpha, alpha), axis=2)
+    sample = cv2.remap(premultiplied, map_x, map_y, cv2.INTER_LINEAR,
+                       borderMode=cv2.BORDER_CONSTANT)
+    a = sample[:, :, 3]
+    result[top:bottom, left:right] = np.rint(np.clip(
+        sample[:, :, :3] + background[top:bottom, left:right]*(1-a[:, :, None]), 0, 255
+    )).astype(np.uint8)
+    alpha_canvas[top:bottom, left:right] = a
+    return result, alpha_canvas
+
+
 class HESpriteRenderer:
     def __init__(self, bank, artifacts):
         self.selector = Selector(bank, artifacts)
         self.selector.build_hull()
+        self.sprite_cache = {}
         self.bank_config = {"mode": "view_matrix", "view_matrix_csvs": [str(Path(bank)/"view_matrix.csv")],
                             "target_height_m": float(self.selector.center[2]),
                             "vertical_mode": "state_y", "camera_height_m": 1.6,
@@ -138,7 +211,13 @@ class HESpriteRenderer:
             box = choice["predicted_box"]
         else:
             raise ValueError("box_mode must be existing, anchor_fixed, or hull")
-        sprite = cv2.imread(choice["sprite_path"], cv2.IMREAD_UNCHANGED)
+        sprite_path = choice["sprite_path"]
+        sprite = self.sprite_cache.get(sprite_path)
+        if sprite is None:
+            sprite = cv2.imread(sprite_path, cv2.IMREAD_UNCHANGED)
+            if sprite is None or sprite.shape[2] != 4:
+                raise ValueError(f"Invalid RGBA sprite: {sprite_path}")
+            self.sprite_cache[sprite_path] = sprite
         image, alpha = reproject_sprite(background_bgr, sprite, box,
                                         camera_rotation_map(virtual, camera_tf, width, height, fov))
         meta = {k: v for k, v in choice.items() if k != "predicted_mask"}
