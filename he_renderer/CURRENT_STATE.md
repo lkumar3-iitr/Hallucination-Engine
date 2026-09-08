@@ -31,10 +31,16 @@ The Patrol overtake achieved 1.0 visibility agreement, 0.9464 mean mask IoU,
 0.9722 Dice, and 0.9710 bbox IoU. The corrected pedestrian pair achieved 1.0
 visibility agreement, 0.8060 mask IoU, 0.8893 Dice, and 0.8325 bbox IoU.
 
-The optimized selector preserves exact choices while reducing the measured
-Tesla selection time from approximately 125 ms to 35-38 ms per selected pose.
-The complete optimized 201-frame Tesla replay produced masks identical to the
-accepted pre-optimization replay by SHA-256 comparison.
+The exact optimized renderer preserves choices while reducing the measured
+1280x720 native render from 116.1 ms to 32.5 ms. The complete optimized
+201-frame Tesla replay produced masks identical to the accepted
+pre-optimization replay by SHA-256 comparison.
+
+An optional guarded distilled selector now reaches 120.7 FPS on the accepted
+single-actor, single-camera native trajectory after warm-up. Its fresh matched
+201-frame CARLA comparison retained 1.0 visibility agreement, 0.9423 mean mask
+IoU, 0.9654 Dice, and 0.9562 bbox IoU. See `OPTIMIZATION_RESULTS.md` for the
+teacher-table protocol, broad validation, and exact fallback behavior.
 
 The 40.05-second `signalized_lead_follow_001` NEAT run completed 801 matched
 frames in both CARLA and HE conditions. The front camera contributed 801

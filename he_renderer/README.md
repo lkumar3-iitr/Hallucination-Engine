@@ -50,5 +50,16 @@ runner. Select the manifest matching the scenario asset. `cartesian_close` is
 selected when its registered close bank covers the pose; otherwise the
 renderer uses the 4320-view `view_matrix` bank.
 
+If a native bank contains `selector_teacher_v1.npz`, the renderer uses its
+guarded distilled selector and falls back to exact visual-hull selection for
+uncertain poses. Generate the table offline with:
+
+```powershell
+python -m he_renderer.tools.generate_selector_teacher `
+  --bank <native-bank> --cache he_renderer/cache `
+  --output <native-bank>/selector_teacher_v1.npz `
+  --samples 100000 --workers 12
+```
+
 See `CURRENT_STATE.md` for accepted measurements and `METHODS.md` for the
 rendering procedure and its current limitations.

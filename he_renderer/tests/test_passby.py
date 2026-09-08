@@ -44,6 +44,9 @@ class SidePassTests(unittest.TestCase):
             packed = np.packbits(masks.reshape((len(masks), -1)), axis=1)
             actual = packed_iou_scores(packed, target)
             np.testing.assert_array_equal(actual, expected)
+            areas = np.count_nonzero(masks, axis=(1, 2))
+            precomputed = packed_iou_scores(packed, target, areas)
+            np.testing.assert_array_equal(precomputed, expected)
 
     def test_rotation_matches_exact_3d_projection(self):
         actor = carla.Transform(carla.Location(x=3, y=-3.5))

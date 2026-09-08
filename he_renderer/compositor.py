@@ -39,7 +39,13 @@ class HESpriteRendererCompositor:
         for order, state in enumerate(states):
             bank = Path(state.he_view_matrix_csv).resolve().parent
             if str(bank) not in self.engines:
-                self.engines[str(bank)] = HESpriteRenderer(bank, Path(__file__).parent / "cache")
+                selector_table = bank / "selector_teacher_v1.npz"
+                self.engines[str(bank)] = HESpriteRenderer(
+                    bank,
+                    Path(__file__).parent / "cache",
+                    selector_table=selector_table if selector_table.exists() else None,
+                    selector_similarity_threshold=0.935,
+                )
             engine = self.engines[str(bank)]
             actor_tf = make_actor_transform(state.world_x, state.world_y, state.world_z, state.world_yaw_deg)
             close = self.close_renderer._render_close_cartesian(

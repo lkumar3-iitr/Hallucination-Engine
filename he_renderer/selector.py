@@ -136,6 +136,7 @@ class Selector:
         bbox = self.metadata["physical_bbox"]
         self.center = np.array([bbox[f"local_center_{a}_m"] for a in "xyz"])
         self.extents = np.array([bbox[f"extent_{a}_m"] for a in "xyz"])
+        self.distilled = None
 
     def path(self, row):
         return self.bank / row["rgba_relpath"]
@@ -157,6 +158,7 @@ class Selector:
             data = np.load(path)
             self.faces = data["faces"]
             self.hull_config = json.loads(str(data["config"]))
+            self.surface_points = np.unique(self.faces.reshape(-1, 3), axis=0)
             return
         axes = [np.arange(c-e, c+e+spacing/2, spacing)
                 for c, e in zip(self.center, self.extents)]
@@ -207,10 +209,22 @@ class Selector:
                 offsets[:, other] = np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]]) * spacing / 2
                 faces.append(centers[:, None, :] + offsets)
         self.faces = np.concatenate(faces).astype(np.float32)
+        self.surface_points = np.unique(self.faces.reshape(-1, 3), axis=0)
         config.update(captures=capture_count, voxels=int(volume.sum()), faces=len(self.faces))
         self.hull_config = config
         np.savez_compressed(path, faces=self.faces, config=json.dumps(config))
         print(f"hull complete: {config}", flush=True)
+
+    def projected_box(self, actor, camera, width, height, fov):
+        fx = width / (2*np.tan(np.deg2rad(fov)/2))
+        uv, depth = project(self.surface_points, relative_matrix(actor, camera),
+                            fx, fx, width/2, height/2)
+        if np.any(depth <= 0.01):
+            raise ValueError("Hull intersects near plane; requires external clipping contract")
+        lo, hi = uv.min(axis=0), uv.max(axis=0)
+        if np.any(hi-lo < 1e-6):
+            raise ValueError("Degenerate projected hull")
+        return [*lo.tolist(), *hi.tolist()]
 
     def predicted_mask(self, actor, camera, width, height, fov):
         fx = width / (2*np.tan(np.deg2rad(fov)/2))
@@ -228,6 +242,68 @@ class Selector:
             cv2.fillConvexPoly(mask, polygon, 1)
         return mask.astype(bool), [*lo.tolist(), *hi.tolist()]
 
+    def load_distilled(self, path, similarity_threshold=0.92):
+        from scipy.spatial import cKDTree
+
+        data = np.load(path)
+        features = np.asarray(data["features"], dtype=np.float64)
+        labels = np.asarray(data["labels"], dtype=np.int32)
+        if "metadata" in data:
+            metadata = json.loads(str(data["metadata"]))
+            table_fingerprint = metadata.get("bank_fingerprint")
+            if table_fingerprint is not None and table_fingerprint != self.fingerprint:
+                raise ValueError("Distilled selector table does not match this sprite bank")
+        if features.ndim != 2 or features.shape[1] != 3 or len(features) != len(labels):
+            raise ValueError("Invalid distilled selector table")
+        if np.any(labels < 0) or np.any(labels >= len(self.rows)):
+            raise ValueError("Distilled selector labels are outside this bank")
+        radians = np.deg2rad(features[:, 0])
+        embedded = np.column_stack((
+            90*np.cos(radians), 90*np.sin(radians),
+            10*np.log(features[:, 1]), features[:, 2],
+        ))
+        self.distilled = {
+            "tree": cKDTree(embedded),
+            "labels": labels,
+            "similarity_threshold": float(similarity_threshold),
+            "path": str(Path(path)),
+            "samples": int(len(features)),
+        }
+
+    def distilled_select(self, actor, camera, width, height, fov):
+        if self.distilled is None:
+            return None
+        query = self.query(actor, camera)
+        radians = np.deg2rad(query[0])
+        embedded = np.array([
+            90*np.cos(radians), 90*np.sin(radians),
+            10*np.log(query[1]), query[2],
+        ])
+        _, neighbors = self.distilled["tree"].query(embedded, k=7)
+        labels = self.distilled["labels"][neighbors]
+        selected = int(labels[0])
+        neighbor_scores = packed_iou_scores(
+            self.packed_masks[labels[1:]], self.masks[selected], self.mask_areas[labels[1:]]
+        )
+        confidence = float(np.min(neighbor_scores))
+        if confidence < self.distilled["similarity_threshold"]:
+            return None
+        angle_delta = np.abs((self.keys[:, 0]-query[0]+180) % 360-180)
+        baseline = int(np.argmin(angle_delta**2 + (self.keys[:, 2]-query[2])**2
+                                + (self.keys[:, 1]-query[1])**2))
+        return {
+            "index": selected,
+            "sprite_path": str(self.path(self.rows[selected])),
+            "key": self.keys[selected].tolist(),
+            "query": query.tolist(),
+            "predicted_iou": None,
+            "baseline_index": baseline,
+            "predicted_box": self.projected_box(actor, camera, width, height, fov),
+            "predicted_mask": None,
+            "selection_mode": "distilled",
+            "distilled_neighbor_similarity": confidence,
+        }
+
     def query(self, actor, camera):
         camera_local = (np.asarray(actor.get_inverse_matrix()) @
                         np.array([camera.location.x, camera.location.y, camera.location.z, 1]))[:3]
@@ -238,6 +314,9 @@ class Selector:
 
     def select(self, actor, camera, width, height, fov):
         """Inputs are poses and intrinsics only. No target mask or target box."""
+        distilled = self.distilled_select(actor, camera, width, height, fov)
+        if distilled is not None:
+            return distilled
         predicted, box = self.predicted_mask(actor, camera, width, height, fov)
         query = self.query(actor, camera)
         angle_delta = np.abs((self.keys[:, 0]-query[0]+180) % 360-180)
@@ -255,4 +334,5 @@ class Selector:
         return {"index": selected, "sprite_path": str(self.path(self.rows[selected])),
                 "key": self.keys[selected].tolist(), "query": query.tolist(),
                 "predicted_iou": selected_score, "baseline_index": baseline,
-                "predicted_box": box, "predicted_mask": predicted}
+                "predicted_box": box, "predicted_mask": predicted,
+                "selection_mode": "exact", "distilled_neighbor_similarity": None}

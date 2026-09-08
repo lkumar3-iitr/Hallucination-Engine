@@ -2514,6 +2514,22 @@ def main():
                         if he_meta is not None
                         else None
                     ),
+                "he_selection_mode":
+                    (
+                        he_meta.get(
+                            "selection_mode"
+                        )
+                        if he_meta is not None
+                        else None
+                    ),
+                "he_distilled_neighbor_similarity":
+                    (
+                        he_meta.get(
+                            "distilled_neighbor_similarity"
+                        )
+                        if he_meta is not None
+                        else None
+                    ),
                 "he_cartesian_close":
                     (
                         he_meta.get(

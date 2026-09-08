@@ -160,9 +160,12 @@ def reproject_sprite(background, sprite, box, target_to_source):
 
 
 class HESpriteRenderer:
-    def __init__(self, bank, artifacts):
+    def __init__(self, bank, artifacts, selector_table=None,
+                 selector_similarity_threshold=0.92):
         self.selector = Selector(bank, artifacts)
         self.selector.build_hull()
+        if selector_table is not None:
+            self.selector.load_distilled(selector_table, selector_similarity_threshold)
         self.sprite_cache = {}
         self.bank_config = {"mode": "view_matrix", "view_matrix_csvs": [str(Path(bank)/"view_matrix.csv")],
                             "target_height_m": float(self.selector.center[2]),
