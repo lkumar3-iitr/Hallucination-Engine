@@ -976,7 +976,12 @@ def hide_actor(actor):
 
     tf = actor.get_transform()
 
-    tf.location.z = -1000.0
+    # Walkers may be constrained back toward navigation geometry when moved
+    # only below the map. Park every actor far outside the calibrated camera
+    # frustum, matching the proven sprite-bank capture procedure.
+    tf.location.x += 500.0
+    tf.location.y += 500.0
+    tf.location.z += 200.0
 
     actor.set_transform(tf)
 
@@ -1389,6 +1394,7 @@ def main():
     instance_camera = None
     realizer = None
     video_writer = None
+    background_writer = None
     frames_fp = None
 
     try:
@@ -1642,7 +1648,20 @@ def main():
             camera_cfg["width"],
             camera_cfg["height"],
         )
+        background_video_path = None
 
+        if args.condition == "he":
+            background_video_path = (
+                output_dir
+                / "background_only.mp4"
+            )
+
+            background_writer = open_video_writer(
+                background_video_path,
+                scenario_fps,
+                camera_cfg["width"],
+                camera_cfg["height"],
+            )
         frames_fp = open(
             frames_path,
             "w",
@@ -1797,6 +1816,21 @@ def main():
                 )
             )
 
+            # Match the proven native-bank capture sequence. Walker render
+            # state can lag a transform by more than one synchronous tick.
+            for _ in range(2):
+                settle_frame = world.tick()
+                get_sensor_frame(
+                    q_rgb,
+                    settle_frame,
+                    "RGB instance calibration present settle",
+                )
+                get_sensor_frame(
+                    q_inst,
+                    settle_frame,
+                    "instance calibration present settle",
+                )
+
             calibration_frame = world.tick()
 
             _calibration_rgb = get_sensor_frame(
@@ -1816,6 +1850,19 @@ def main():
             hide_actor(
                 calibration_actor
             )
+
+            for _ in range(2):
+                settle_frame = world.tick()
+                get_sensor_frame(
+                    q_rgb,
+                    settle_frame,
+                    "RGB instance calibration hidden settle",
+                )
+                get_sensor_frame(
+                    q_inst,
+                    settle_frame,
+                    "instance calibration hidden settle",
+                )
 
             hidden_frame = world.tick()
 
@@ -2151,7 +2198,15 @@ def main():
                 base_rgb = carla_rgb_to_array(
                     base_rgb_image
                 )
-
+                # Save the exact adversary-free CARLA background
+                # BEFORE any HE actor is composited.
+                if background_writer is not None:
+                    background_writer.write(
+                        cv2.cvtColor(
+                            base_rgb,
+                            cv2.COLOR_RGB2BGR,
+                        )
+                    )
                 # Use the transform attached to this exact rendered
                 # sensor sample, matching the CARLA-reference semantics.
                 camera_tf = (
@@ -2528,6 +2583,11 @@ def main():
         print("[frames]    ", frames_path)
         print("[masks]     ", mask_dir)
         print("[video]     ", video_path)
+        if background_video_path is not None:
+            print(
+                "[background]",
+                background_video_path,
+            )
         print("=" * 96)
 
     finally:
@@ -2542,7 +2602,11 @@ def main():
                 video_writer.release()
             except Exception:
                 pass
-
+        if background_writer is not None:
+            try:
+                background_writer.release()
+            except Exception:
+                pass
         if realizer is not None:
             try:
                 realizer.destroy_all()

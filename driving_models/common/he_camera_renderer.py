@@ -201,6 +201,139 @@ def _transform_homogeneous_point(matrix, x, y):
         return None
     return projected[:2] / projected[2]
 
+def measure_alpha_geometry_from_rgba(
+    rgba,
+    alpha_threshold=1,
+):
+    alpha = rgba[:, :, 3]
+
+    ys, xs = np.where(
+        alpha >= alpha_threshold
+    )
+
+    if xs.size == 0 or ys.size == 0:
+        return None
+
+    x1 = int(xs.min())
+    x2 = int(xs.max())
+    y1 = int(ys.min())
+    y2 = int(ys.max())
+
+    width_px = int(x2 - x1 + 1)
+    height_px = int(y2 - y1 + 1)
+
+    center_x = (
+        float(x1 + x2) / 2.0
+    )
+
+    bottom_y = float(y2)
+
+    return {
+        "x1": x1,
+        "y1": y1,
+        "x2": x2,
+        "y2": y2,
+        "width_px": width_px,
+        "height_px": height_px,
+        "center_x": center_x,
+        "bottom_y": bottom_y,
+    }
+def find_elevation_bracket(
+    available_elevations_deg,
+    query_elevation_deg,
+):
+    elevs = sorted(
+        float(v)
+        for v in available_elevations_deg
+    )
+
+    q = float(query_elevation_deg)
+
+    if not elevs:
+        return None
+
+    if q <= elevs[0]:
+        return {
+            "lower": elevs[0],
+            "upper": elevs[0],
+            "t": 0.0,
+        }
+
+    if q >= elevs[-1]:
+        return {
+            "lower": elevs[-1],
+            "upper": elevs[-1],
+            "t": 0.0,
+        }
+
+    for i in range(len(elevs) - 1):
+        e0 = elevs[i]
+        e1 = elevs[i + 1]
+
+        if e0 <= q <= e1:
+            if abs(e1 - e0) < 1e-12:
+                t = 0.0
+            else:
+                t = (
+                    (q - e0)
+                    / (e1 - e0)
+                )
+
+            return {
+                "lower": e0,
+                "upper": e1,
+                "t": float(t),
+            }
+
+    return {
+        "lower": elevs[-1],
+        "upper": elevs[-1],
+        "t": 0.0,
+    }
+def blend_rgba_premultiplied(
+    rgba_a,
+    rgba_b,
+    t,
+):
+    t = float(t)
+
+    a = rgba_a.astype(np.float32) / 255.0
+    b = rgba_b.astype(np.float32) / 255.0
+
+    alpha_a = a[:, :, 3:4]
+    alpha_b = b[:, :, 3:4]
+
+    rgb_a_pm = a[:, :, :3] * alpha_a
+    rgb_b_pm = b[:, :, :3] * alpha_b
+
+    rgb_pm = (
+        (1.0 - t) * rgb_a_pm
+        + t * rgb_b_pm
+    )
+
+    alpha = (
+        (1.0 - t) * alpha_a
+        + t * alpha_b
+    )
+
+    rgb = np.zeros_like(rgb_pm)
+    valid = alpha > 1e-8
+    rgb[valid[:, :, 0]] = (
+        rgb_pm[valid[:, :, 0]]
+        / alpha[valid[:, :, 0]]
+    )
+
+    out = np.zeros_like(a)
+    out[:, :, :3] = rgb
+    out[:, :, 3:4] = alpha
+
+    out = np.clip(
+        out * 255.0,
+        0.0,
+        255.0,
+    ).astype(np.uint8)
+
+    return out
 
 def warp_view_matrix_sprite_camera_rotation(
     sprite_rgba,
@@ -753,7 +886,525 @@ def project_asset_physical_bbox_center(
         ),
         k=make_camera_intrinsic(width, height, fov),
     )
+def project_asset_physical_bbox_image_box(
+    actor_tf,
+    camera_tf,
+    physical_bbox,
+    width,
+    height,
+    fov,
+):
+    """
+    Project the exact physical CARLA bbox into the runtime camera.
 
+    Returns the full projected 2-D physical bbox.  This is NOT the
+    final HE silhouette; the sprite-bank silhouette correction is
+    applied later.
+    """
+
+    if not physical_bbox:
+        return None
+
+    required = (
+        "extent_x_m",
+        "extent_y_m",
+        "extent_z_m",
+        "local_center_x_m",
+        "local_center_y_m",
+        "local_center_z_m",
+    )
+
+    if any(
+        physical_bbox.get(key) is None
+        for key in required
+    ):
+        return None
+
+    extent_x = float(physical_bbox["extent_x_m"])
+    extent_y = float(physical_bbox["extent_y_m"])
+    extent_z = float(physical_bbox["extent_z_m"])
+
+    bbox_tf = carla.Transform(
+        carla.Location(
+            x=float(physical_bbox["local_center_x_m"]),
+            y=float(physical_bbox["local_center_y_m"]),
+            z=float(physical_bbox["local_center_z_m"]),
+        ),
+        carla.Rotation(
+            pitch=float(
+                physical_bbox.get(
+                    "local_rotation_pitch_deg",
+                    0.0,
+                )
+            ),
+            yaw=float(
+                physical_bbox.get(
+                    "local_rotation_yaw_deg",
+                    0.0,
+                )
+            ),
+            roll=float(
+                physical_bbox.get(
+                    "local_rotation_roll_deg",
+                    0.0,
+                )
+            ),
+        ),
+    )
+
+    actor_to_world = np.asarray(
+        actor_tf.get_matrix(),
+        dtype=np.float64,
+    )
+
+    bbox_to_actor = np.asarray(
+        bbox_tf.get_matrix(),
+        dtype=np.float64,
+    )
+
+    bbox_to_world = (
+        actor_to_world
+        @ bbox_to_actor
+    )
+
+    world_to_camera = np.asarray(
+        camera_tf.get_inverse_matrix(),
+        dtype=np.float64,
+    )
+
+    k = make_camera_intrinsic(
+        width,
+        height,
+        fov,
+    )
+
+    projected = []
+
+    for local_x in (-extent_x, +extent_x):
+        for local_y in (-extent_y, +extent_y):
+            for local_z in (-extent_z, +extent_z):
+
+                local_h = np.asarray(
+                    [
+                        local_x,
+                        local_y,
+                        local_z,
+                        1.0,
+                    ],
+                    dtype=np.float64,
+                )
+
+                world_h = (
+                    bbox_to_world
+                    @ local_h
+                )
+
+                p = project_world_point(
+                    point=carla.Location(
+                        x=float(world_h[0]),
+                        y=float(world_h[1]),
+                        z=float(world_h[2]),
+                    ),
+                    world_to_camera=world_to_camera,
+                    k=k,
+                )
+
+                # Do not invent geometry if a physical corner has
+                # crossed the camera plane.
+                if p is None:
+                    return None
+
+                projected.append(p)
+
+    if len(projected) != 8:
+        return None
+
+    us = np.asarray(
+        [float(p["u"]) for p in projected],
+        dtype=np.float64,
+    )
+
+    vs = np.asarray(
+        [float(p["v"]) for p in projected],
+        dtype=np.float64,
+    )
+
+    depths = np.asarray(
+        [float(p["depth"]) for p in projected],
+        dtype=np.float64,
+    )
+
+    x1 = float(np.min(us))
+    x2 = float(np.max(us))
+    y1 = float(np.min(vs))
+    y2 = float(np.max(vs))
+
+    return {
+        "x1": x1,
+        "y1": y1,
+        "x2": x2,
+        "y2": y2,
+
+        "width_px": float(x2 - x1),
+        "height_px": float(y2 - y1),
+
+        "center_x": float(
+            (x1 + x2) / 2.0
+        ),
+
+        "bottom_y": float(y2),
+
+        "nearest_depth_m": float(
+            np.min(depths)
+        ),
+
+        "farthest_depth_m": float(
+            np.max(depths)
+        ),
+    }
+def _silhouette_correction_from_record(
+    record,
+):
+    """
+    Convert one source-bank observation into dimensionless
+    silhouette-vs-physical-bbox correction values.
+    """
+
+    physical_w = record.get(
+        "projected_bbox_width_px"
+    )
+
+    physical_h = record.get(
+        "projected_bbox_height_px"
+    )
+
+    physical_cx = record.get(
+        "projected_bbox_center_x_px"
+    )
+
+    physical_bottom = record.get(
+        "projected_bbox_bottom_y_px"
+    )
+
+    visible_w = record.get(
+        "visible_width_px"
+    )
+
+    visible_h = record.get(
+        "visible_height_px"
+    )
+
+    crop_x1 = record.get(
+        "crop_x1_px"
+    )
+
+    crop_y1 = record.get(
+        "crop_y1_px"
+    )
+
+    anchor_x = record.get(
+        "anchor_x"
+    )
+
+    anchor_y = record.get(
+        "anchor_y"
+    )
+
+    required = (
+        physical_w,
+        physical_h,
+        physical_cx,
+        physical_bottom,
+        visible_w,
+        visible_h,
+        crop_x1,
+        crop_y1,
+        anchor_x,
+        anchor_y,
+    )
+
+    if any(
+        value is None
+        for value in required
+    ):
+        return None
+
+    physical_w = float(physical_w)
+    physical_h = float(physical_h)
+
+    if (
+        physical_w <= 1e-6
+        or physical_h <= 1e-6
+    ):
+        return None
+
+    # anchor_x/y are the alpha-center / alpha-bottom
+    # coordinates inside the cropped sprite.
+    alpha_center_x_full = (
+        float(crop_x1)
+        + float(anchor_x)
+    )
+
+    alpha_bottom_y_full = (
+        float(crop_y1)
+        + float(anchor_y)
+    )
+
+    distance_m = record.get(
+        "bbox_center_distance_m"
+    )
+
+    if (
+        distance_m is None
+        or float(distance_m) <= 0.0
+    ):
+        distance_m = record.get(
+            "distance_m"
+        )
+
+    if (
+        distance_m is None
+        or float(distance_m) <= 0.0
+    ):
+        return None
+
+    return {
+        "distance_m":
+            float(distance_m),
+
+        "width_ratio":
+            float(visible_w)
+            / physical_w,
+
+        "height_ratio":
+            float(visible_h)
+            / physical_h,
+
+        "center_x_offset_ratio":
+            (
+                alpha_center_x_full
+                - float(physical_cx)
+            )
+            / physical_w,
+
+        "bottom_y_offset_ratio":
+            (
+                alpha_bottom_y_full
+                - float(physical_bottom)
+            )
+            / physical_h,
+    }
+
+
+def interpolate_silhouette_correction_inverse_depth(
+    view_matrix,
+    selected_angle_deg,
+    selected_elevation_deg,
+    runtime_center_distance_m,
+):
+    """
+    Interpolate the dimensionless silhouette correction in 1/d.
+
+    Angle and elevation stay frozen to the current geometric
+    selector.  Only distance is interpolated/extrapolated here.
+    """
+
+    samples = []
+
+    angle = (
+        int(
+            round(
+                float(selected_angle_deg)
+            )
+        )
+        % 360
+    )
+
+    elevation = float(
+        selected_elevation_deg
+    )
+
+    for distance in view_matrix["distances"]:
+
+        key = (
+            angle,
+            round(float(distance), 6),
+            round(elevation, 6),
+        )
+
+        record = (
+            view_matrix["index"]
+            .get(key)
+        )
+
+        if record is None:
+            continue
+
+        correction = (
+            _silhouette_correction_from_record(
+                record
+            )
+        )
+
+        if correction is None:
+            continue
+
+        correction = dict(correction)
+
+        correction["bank_distance_m"] = float(
+            distance
+        )
+
+        correction["inverse_depth"] = (
+            1.0
+            / float(
+                correction["distance_m"]
+            )
+        )
+
+        samples.append(
+            correction
+        )
+
+    if not samples:
+        return None
+
+    samples.sort(
+        key=lambda row:
+            row["inverse_depth"]
+    )
+
+    runtime_center_distance_m = max(
+        float(runtime_center_distance_m),
+        1e-6,
+    )
+
+    query_q = (
+        1.0
+        / runtime_center_distance_m
+    )
+
+    if len(samples) == 1:
+        result = dict(samples[0])
+
+        result.update({
+            "runtime_center_distance_m":
+                runtime_center_distance_m,
+
+            "query_inverse_depth":
+                query_q,
+
+            "interpolation_t":
+                0.0,
+
+            "extrapolated":
+                True,
+        })
+
+        return result
+
+    # Select interpolation or extrapolation pair.
+    if query_q <= samples[0]["inverse_depth"]:
+
+        a = samples[0]
+        b = samples[1]
+
+        extrapolated = True
+
+    elif query_q >= samples[-1]["inverse_depth"]:
+
+        a = samples[-2]
+        b = samples[-1]
+
+        extrapolated = True
+
+    else:
+        a = samples[0]
+        b = samples[1]
+
+        extrapolated = False
+
+        for i in range(
+            len(samples) - 1
+        ):
+            candidate_a = samples[i]
+            candidate_b = samples[i + 1]
+
+            if (
+                candidate_a["inverse_depth"]
+                <= query_q
+                <= candidate_b["inverse_depth"]
+            ):
+                a = candidate_a
+                b = candidate_b
+                break
+
+    denominator = (
+        b["inverse_depth"]
+        - a["inverse_depth"]
+    )
+
+    if abs(denominator) <= 1e-12:
+        t = 0.0
+    else:
+        t = (
+            query_q
+            - a["inverse_depth"]
+        ) / denominator
+
+    def lerp(name):
+        return (
+            float(a[name])
+            +
+            float(t)
+            *
+            (
+                float(b[name])
+                - float(a[name])
+            )
+        )
+
+    return {
+        "width_ratio":
+            lerp("width_ratio"),
+
+        "height_ratio":
+            lerp("height_ratio"),
+
+        "center_x_offset_ratio":
+            lerp(
+                "center_x_offset_ratio"
+            ),
+
+        "bottom_y_offset_ratio":
+            lerp(
+                "bottom_y_offset_ratio"
+            ),
+
+        "runtime_center_distance_m":
+            runtime_center_distance_m,
+
+        "query_inverse_depth":
+            query_q,
+
+        "lower_bank_distance_m":
+            float(a["bank_distance_m"]),
+
+        "upper_bank_distance_m":
+            float(b["bank_distance_m"]),
+
+        "lower_actual_distance_m":
+            float(a["distance_m"]),
+
+        "upper_actual_distance_m":
+            float(b["distance_m"]),
+
+        "interpolation_t":
+            float(t),
+
+        "extrapolated":
+            bool(extrapolated),
+    }
 def project_asset_physical_support_anchor(
     actor_tf,
     camera_tf,
@@ -2545,6 +3196,323 @@ def apply_scene_depth_occlusion_to_sprite(
     )
 
 
+
+# ============================================================
+# Geometry-matched view selector
+# ============================================================
+
+def _physical_bbox_actor_local_vertices(
+    physical_bbox,
+):
+    """Return the 8 labelled physical bbox vertices in actor-local xyz."""
+    if not physical_bbox:
+        return None
+
+    required = (
+        "extent_x_m",
+        "extent_y_m",
+        "extent_z_m",
+        "local_center_x_m",
+        "local_center_y_m",
+        "local_center_z_m",
+    )
+    if any(physical_bbox.get(key) is None for key in required):
+        return None
+
+    bbox_tf = carla.Transform(
+        carla.Location(
+            x=float(physical_bbox["local_center_x_m"]),
+            y=float(physical_bbox["local_center_y_m"]),
+            z=float(physical_bbox["local_center_z_m"]),
+        ),
+        carla.Rotation(
+            pitch=float(physical_bbox.get("local_rotation_pitch_deg", 0.0)),
+            yaw=float(physical_bbox.get("local_rotation_yaw_deg", 0.0)),
+            roll=float(physical_bbox.get("local_rotation_roll_deg", 0.0)),
+        ),
+    )
+    bbox_to_actor = np.asarray(bbox_tf.get_matrix(), dtype=np.float64)
+
+    ex = float(physical_bbox["extent_x_m"])
+    ey = float(physical_bbox["extent_y_m"])
+    ez = float(physical_bbox["extent_z_m"])
+
+    vertices = []
+    # Fixed order is important: the same labelled corner is compared
+    # between the runtime projection and every source-bank candidate.
+    for x in (-ex, +ex):
+        for y in (-ey, +ey):
+            for z in (-ez, +ez):
+                p = bbox_to_actor @ np.asarray([x, y, z, 1.0], dtype=np.float64)
+                vertices.append(p[:3])
+
+    return np.asarray(vertices, dtype=np.float64)
+
+
+def _project_actor_local_vertices(
+    vertices_actor,
+    actor_tf,
+    camera_tf,
+    width,
+    height,
+    fov,
+):
+    """Project labelled actor-local vertices into a runtime camera."""
+    if vertices_actor is None:
+        return None
+
+    actor_to_world = np.asarray(actor_tf.get_matrix(), dtype=np.float64)
+    world_to_camera = np.asarray(camera_tf.get_inverse_matrix(), dtype=np.float64)
+    k = make_camera_intrinsic(width, height, fov)
+
+    points = []
+    for xyz in np.asarray(vertices_actor, dtype=np.float64):
+        world_h = actor_to_world @ np.asarray(
+            [float(xyz[0]), float(xyz[1]), float(xyz[2]), 1.0],
+            dtype=np.float64,
+        )
+        projected = project_world_point(
+            point=carla.Location(
+                x=float(world_h[0]),
+                y=float(world_h[1]),
+                z=float(world_h[2]),
+            ),
+            world_to_camera=world_to_camera,
+            k=k,
+        )
+        if projected is None:
+            return None
+        points.append([float(projected["u"]), float(projected["v"])])
+
+    return np.asarray(points, dtype=np.float64)
+
+
+def _normalize_projected_vertex_signature(points):
+    """
+    Remove only 2-D translation and uniform image scale.
+
+    We intentionally KEEP aspect ratio, shear and perspective because those
+    are the cues that tell us which raw bank view best resembles the runtime
+    camera projection.  We also keep image-plane rotation for this first test.
+    """
+    if points is None:
+        return None
+
+    points = np.asarray(points, dtype=np.float64)
+    if points.shape != (8, 2):
+        return None
+
+    centered = points - np.mean(points, axis=0, keepdims=True)
+    scale = math.sqrt(float(np.mean(np.sum(centered * centered, axis=1))))
+    if not np.isfinite(scale) or scale <= 1e-9:
+        return None
+
+    return centered / scale
+
+
+def _source_bank_bbox_signature(
+    physical_bbox,
+    angle_deg,
+    elevation_deg,
+    bbox_center_distance_m,
+    capture_metadata,
+):
+    """
+    Recreate the centered source-bank camera analytically and project the
+    same labelled physical bbox vertices.
+
+    Bank convention already used elsewhere in this renderer:
+        source yaw   = angle - 180 deg
+        source pitch = -elevation
+
+    The source camera is placed on that viewing ray so the physical bbox
+    center is exactly bbox_center_distance_m away and centered in the image.
+    """
+    vertices = _physical_bbox_actor_local_vertices(physical_bbox)
+    if vertices is None:
+        return None
+
+    source_width = int(round(float(capture_metadata.get("image_width_px", 0.0))))
+    source_height = int(round(float(capture_metadata.get("image_height_px", 0.0))))
+    source_fov = float(capture_metadata.get("fov_deg", 0.0))
+    if source_width <= 0 or source_height <= 0 or source_fov <= 0.0:
+        return None
+
+    center_actor = np.asarray(
+        [
+            float(physical_bbox["local_center_x_m"]),
+            float(physical_bbox["local_center_y_m"]),
+            float(physical_bbox["local_center_z_m"]),
+        ],
+        dtype=np.float64,
+    )
+
+    source_rotation = carla.Rotation(
+        pitch=-float(elevation_deg),
+        yaw=float(angle_deg) - 180.0,
+        roll=0.0,
+    )
+    rotation_only = carla.Transform(rotation=source_rotation)
+    source_r = _transform_rotation_matrix(rotation_only)
+    forward = np.asarray(source_r[:, 0], dtype=np.float64)
+
+    distance = max(float(bbox_center_distance_m), 1e-6)
+    camera_xyz = center_actor - distance * forward
+
+    source_camera_tf = carla.Transform(
+        carla.Location(
+            x=float(camera_xyz[0]),
+            y=float(camera_xyz[1]),
+            z=float(camera_xyz[2]),
+        ),
+        source_rotation,
+    )
+
+    source_actor_tf = carla.Transform()
+    projected = _project_actor_local_vertices(
+        vertices_actor=vertices,
+        actor_tf=source_actor_tf,
+        camera_tf=source_camera_tf,
+        width=source_width,
+        height=source_height,
+        fov=source_fov,
+    )
+    return _normalize_projected_vertex_signature(projected)
+
+
+def select_view_matrix_sprite_projected_bbox_match(
+    base_sprite_info,
+    view_matrix,
+    actor_tf,
+    camera_tf,
+    physical_bbox,
+    width,
+    height,
+    fov,
+):
+    """
+    Choose the raw bank angle/elevation whose normalized projected physical
+    bbox most closely matches the runtime camera projection.
+
+    This is mask-free and learning-free.  It deliberately keeps the source
+    distance fixed to the production selector's chosen bank distance so this
+    experiment changes ONLY angle/elevation selection.
+    """
+    if not base_sprite_info or not base_sprite_info.get("exists", False):
+        return None
+
+    vertices = _physical_bbox_actor_local_vertices(physical_bbox)
+    runtime_points = _project_actor_local_vertices(
+        vertices_actor=vertices,
+        actor_tf=actor_tf,
+        camera_tf=camera_tf,
+        width=width,
+        height=height,
+        fov=fov,
+    )
+    runtime_signature = _normalize_projected_vertex_signature(runtime_points)
+    if runtime_signature is None:
+        return None
+
+    selected_distance = float(base_sprite_info["selected_distance_m"])
+    distance_key = round(selected_distance, 6)
+    capture_metadata = view_matrix.get("capture_metadata") or {}
+
+    # Cache source-bank geometry signatures. Across a video, only the runtime
+    # projection changes; source-bank signatures are fixed. This turns the
+    # expensive source projection work into at most 360 x 4 x 3 one-time
+    # calculations for the full bank.
+    source_cache = view_matrix.setdefault(
+        "_projected_bbox_match_source_cache",
+        {},
+    )
+
+    best = None
+    for angle in view_matrix.get("angles", []):
+        angle_key = int(round(float(angle))) % 360
+        for elevation in view_matrix.get("elevations", []):
+            elevation_value = float(elevation)
+            key = (
+                angle_key,
+                distance_key,
+                round(elevation_value, 6),
+            )
+            record = view_matrix["index"].get(key)
+            if record is None:
+                continue
+
+            actual_distance = record.get("bbox_center_distance_m")
+            if actual_distance is None or float(actual_distance) <= 0.0:
+                actual_distance = selected_distance
+
+            cache_key = (
+                int(angle_key),
+                round(float(elevation_value), 6),
+                round(float(selected_distance), 6),
+                round(float(actual_distance), 6),
+            )
+            source_signature = source_cache.get(cache_key)
+            if source_signature is None:
+                source_signature = _source_bank_bbox_signature(
+                    physical_bbox=physical_bbox,
+                    angle_deg=float(angle_key),
+                    elevation_deg=elevation_value,
+                    bbox_center_distance_m=float(actual_distance),
+                    capture_metadata=capture_metadata,
+                )
+                if source_signature is not None:
+                    source_cache[cache_key] = source_signature
+            if source_signature is None:
+                continue
+
+            error = float(np.mean(np.sum(
+                (runtime_signature - source_signature) ** 2,
+                axis=1,
+            )))
+
+            if best is None or error < best["score"]:
+                best = {
+                    "score": error,
+                    "angle_deg": angle_key,
+                    "elevation_deg": elevation_value,
+                    "record": record,
+                    "bbox_center_distance_m": float(actual_distance),
+                }
+
+    if best is None:
+        return None
+
+    matched_info = _view_matrix_record_info(
+        base_info=base_sprite_info,
+        record=best["record"],
+        angle=best["angle_deg"],
+        distance=selected_distance,
+        elevation=best["elevation_deg"],
+    )
+    matched_info["selection_mode"] = "projected_bbox_match"
+
+    production_angle = int(base_sprite_info["selected_angle"])
+    matched_angle = int(best["angle_deg"])
+    angle_delta = (
+        float(matched_angle - production_angle) + 180.0
+    ) % 360.0 - 180.0
+
+    return matched_info, {
+        "score": float(best["score"]),
+        "angle_deg": matched_angle,
+        "elevation_deg": float(best["elevation_deg"]),
+        "distance_m": float(selected_distance),
+        "bbox_center_distance_m": float(best["bbox_center_distance_m"]),
+        "production_angle_deg": production_angle,
+        "production_elevation_deg": float(
+            base_sprite_info["selected_elevation_deg"]
+        ),
+        "query_angle_deg": float(base_sprite_info["relative_angle_deg"]),
+        "query_elevation_deg": float(base_sprite_info["query_elevation_deg"]),
+        "angle_delta_from_production_deg": float(angle_delta),
+    }
+
+
 # ============================================================
 # Production 4320 view-matrix renderer
 # ============================================================
@@ -2575,6 +3543,9 @@ def render_he_actor_view_matrix(
     camera_rotation_reprojection=False,
     camera_rotation_reprojection_min_width_fraction=0.20,
     camera_rotation_reprojection_min_bearing_deg=30.0,
+    camera_rotation_reprojection_appearance_only=False,
+    interpolate_elevation_for_appearance=False,
+    view_selection_mode="production",
 ):
 
     frame = (
@@ -2590,6 +3561,13 @@ def render_he_actor_view_matrix(
     silhouette_scale = float(silhouette_scale)
     warp_scale_mode = str(warp_scale_mode).strip().lower()
     viewpoint_lateral_sign = float(viewpoint_lateral_sign)
+    view_selection_mode = str(view_selection_mode).strip().lower()
+    if view_selection_mode not in {"production", "projected_bbox_match"}:
+        raise ValueError(
+            "view_selection_mode must be 'production' or "
+            "'projected_bbox_match', got "
+            f"{view_selection_mode!r}"
+        )
     if viewpoint_lateral_sign not in {-1.0, 1.0}:
         raise ValueError(
             "viewpoint_lateral_sign must be -1.0 or 1.0, got "
@@ -2617,13 +3595,15 @@ def render_he_actor_view_matrix(
         "close_width_blend",
         "sprite_alpha_metric",
         "sprite_alpha_width_proxy_height",
+        "physical_bbox_silhouette",
     }:
         raise ValueError(
             "geometry_mode must be one of "
             "'proxy', 'sprite_native', "
             "'sprite_native_width', 'close_width_blend', or "
-            "'sprite_alpha_metric', or "
-            "'sprite_alpha_width_proxy_height', got "
+            "'sprite_alpha_metric', "
+            "'sprite_alpha_width_proxy_height', or "
+            "'physical_bbox_silhouette', got "
             f"{geometry_mode!r}"
         )
     projection_mode = (
@@ -2673,6 +3653,7 @@ def render_he_actor_view_matrix(
             and geometry_mode in {
                 "sprite_alpha_metric",
                 "sprite_alpha_width_proxy_height",
+                "physical_bbox_silhouette",
             }
             and box.get("reason") == "footprint_intersects_camera_plane"
         ):
@@ -2696,6 +3677,18 @@ def render_he_actor_view_matrix(
 
         "sprite_mode":
             "view_matrix",
+
+        "view_selection_mode":
+            view_selection_mode,
+
+        "production_selected_angle_before_match":
+            None,
+
+        "production_selected_elevation_before_match":
+            None,
+
+        "projected_bbox_match":
+            None,
 
         "selected_angle":
             None,
@@ -2887,6 +3880,31 @@ def render_he_actor_view_matrix(
             meta,
         )
 
+    meta["production_selected_angle_before_match"] = int(
+        sprite_info["selected_angle"]
+    )
+    meta["production_selected_elevation_before_match"] = float(
+        sprite_info["selected_elevation_deg"]
+    )
+
+    if view_selection_mode == "projected_bbox_match":
+        physical_bbox_for_selection = view_matrix.get("physical_bbox")
+        matched = select_view_matrix_sprite_projected_bbox_match(
+            base_sprite_info=sprite_info,
+            view_matrix=view_matrix,
+            actor_tf=actor_tf,
+            camera_tf=camera_tf,
+            physical_bbox=physical_bbox_for_selection,
+            width=width,
+            height=height,
+            fov=fov,
+        )
+        if matched is None:
+            meta["reason"] = "projected_bbox_match_failed"
+            return frame, meta
+        sprite_info, match_meta = matched
+        meta["projected_bbox_match"] = match_meta
+
     sprite_rgba = sprite_cache.load_rgba(
         sprite_info["sprite_path"]
     )
@@ -2925,7 +3943,159 @@ def render_he_actor_view_matrix(
             "physical_bbox"
         )
     )
+    physical_silhouette_prediction = None
 
+    if geometry_mode == "physical_bbox_silhouette":
+
+        runtime_physical_bbox = (
+            project_asset_physical_bbox_image_box(
+                actor_tf=actor_tf,
+                camera_tf=camera_tf,
+                physical_bbox=physical_bbox,
+                width=width,
+                height=height,
+                fov=fov,
+            )
+        )
+
+        runtime_bbox_center = (
+            project_asset_physical_bbox_center(
+                actor_tf=actor_tf,
+                camera_tf=camera_tf,
+                physical_bbox=physical_bbox,
+                width=width,
+                height=height,
+                fov=fov,
+            )
+        )
+
+        if (
+            runtime_physical_bbox is None
+            or runtime_bbox_center is None
+        ):
+            meta["reason"] = (
+                "physical_bbox_projection_failed"
+            )
+
+            return (
+                frame,
+                meta,
+            )
+
+        runtime_center_distance_m = math.sqrt(
+            float(
+                runtime_bbox_center["depth"]
+            ) ** 2
+            +
+            float(
+                runtime_bbox_center[
+                    "camera_right_m"
+                ]
+            ) ** 2
+            +
+            float(
+                runtime_bbox_center[
+                    "camera_up_m"
+                ]
+            ) ** 2
+        )
+
+        correction = (
+            interpolate_silhouette_correction_inverse_depth(
+                view_matrix=view_matrix,
+
+                selected_angle_deg=
+                    sprite_info[
+                        "selected_angle"
+                    ],
+
+                selected_elevation_deg=
+                    sprite_info[
+                        "selected_elevation_deg"
+                    ],
+
+                runtime_center_distance_m=
+                    runtime_center_distance_m,
+            )
+        )
+
+        if correction is None:
+            meta["reason"] = (
+                "silhouette_correction_unavailable"
+            )
+
+            return (
+                frame,
+                meta,
+            )
+
+        physical_w = float(
+            runtime_physical_bbox[
+                "width_px"
+            ]
+        )
+
+        physical_h = float(
+            runtime_physical_bbox[
+                "height_px"
+            ]
+        )
+
+        physical_silhouette_prediction = {
+            "center_x":
+                float(
+                    runtime_physical_bbox[
+                        "center_x"
+                    ]
+                )
+                +
+                float(
+                    correction[
+                        "center_x_offset_ratio"
+                    ]
+                )
+                *
+                physical_w,
+
+            "bottom_y":
+                float(
+                    runtime_physical_bbox[
+                        "bottom_y"
+                    ]
+                )
+                +
+                float(
+                    correction[
+                        "bottom_y_offset_ratio"
+                    ]
+                )
+                *
+                physical_h,
+
+            "width_px":
+                physical_w
+                *
+                float(
+                    correction[
+                        "width_ratio"
+                    ]
+                ),
+
+            "height_px":
+                physical_h
+                *
+                float(
+                    correction[
+                        "height_ratio"
+                    ]
+                ),
+
+            "runtime_physical_bbox":
+                runtime_physical_bbox,
+
+            "correction":
+                correction,
+        }
     target_support_anchor = (
         project_asset_physical_support_anchor(
             actor_tf=actor_tf,
@@ -3009,7 +4179,39 @@ def render_he_actor_view_matrix(
         is not None
     )
 
-    if alpha_metric_target_anchor is not None:
+    if physical_silhouette_prediction is not None:
+
+        render_target_x = float(
+            physical_silhouette_prediction[
+                "center_x"
+            ]
+        )
+
+        render_target_y = (
+            float(
+                physical_silhouette_prediction[
+                    "bottom_y"
+                ]
+            )
+            +
+            float(
+                bottom_y_offset_px
+            )
+        )
+
+        render_source_anchor_x = (
+            source_alpha_center_x
+        )
+
+        render_source_anchor_y = (
+            source_alpha_bottom_y
+        )
+
+        anchor_mode = (
+            "physical_bbox_silhouette_correction"
+        )
+
+    elif alpha_metric_target_anchor is not None:
         render_target_x = float(alpha_metric_target_anchor["x"])
         render_target_y = (
             float(alpha_metric_target_anchor["y"])
@@ -3186,6 +4388,46 @@ def render_he_actor_view_matrix(
     warp_alpha_threshold = 10
 
     geometry_prediction = None
+
+    if geometry_mode == "physical_bbox_silhouette":
+
+        if physical_silhouette_prediction is None:
+            meta["reason"] = (
+                "physical_silhouette_prediction_missing"
+            )
+
+            return (
+                frame,
+                meta,
+            )
+
+        target_box_w = float(
+            physical_silhouette_prediction[
+                "width_px"
+            ]
+        )
+
+        target_box_h = float(
+            physical_silhouette_prediction[
+                "height_px"
+            ]
+        )
+
+        meta["geometry_version"] = (
+            "physical_bbox_silhouette_v1"
+        )
+
+        meta["runtime_physical_bbox"] = (
+            physical_silhouette_prediction[
+                "runtime_physical_bbox"
+            ]
+        )
+
+        meta["physical_silhouette_correction"] = (
+            physical_silhouette_prediction[
+                "correction"
+            ]
+        )
 
     if geometry_mode in {
         "sprite_alpha_metric",

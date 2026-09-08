@@ -69,6 +69,9 @@ if str(COMMON_DIR) not in sys.path:
         str(COMMON_DIR),
     )
 
+if str(HE_ROOT) not in sys.path:
+    sys.path.insert(0, str(HE_ROOT))
+
 
 # ============================================================
 # Shared HE runtime
@@ -88,6 +91,7 @@ from he_multi_actor_compositor_v1 import (
 from he_multi_actor_compositor_v2 import (
     HEMultiActorCompositorV2,
 )
+from he_renderer.compositor import HESpriteRendererCompositor
 
 from scenario_execution_runtime_v1 import (
     ExecutionWorldOrigin,
@@ -1473,9 +1477,12 @@ def main():
     )
     parser.add_argument(
         "--he-renderer-version",
-        choices=["v1", "v2"],
+        choices=["v1", "v2", "he_sprite_renderer_v1"],
         default="v1",
-        help="HE compositor implementation. V1 remains the control/default.",
+        help=(
+            "HE compositor implementation. V1 remains the control/default; "
+            "he_sprite_renderer_v1 selects the calibrated production sprite backend."
+        ),
     )
 
     parser.add_argument(
@@ -2133,11 +2140,12 @@ def main():
         # HE compositor
         # ====================================================
 
-        compositor_class = (
-            HEMultiActorCompositorV2
-            if args.he_renderer_version == "v2"
-            else HEMultiActorCompositorV1
-        )
+        compositor_classes = {
+            "v1": HEMultiActorCompositorV1,
+            "v2": HEMultiActorCompositorV2,
+            "he_sprite_renderer_v1": HESpriteRendererCompositor,
+        }
+        compositor_class = compositor_classes[args.he_renderer_version]
         compositor = (
             compositor_class(
                 distance_selection_mode=
@@ -2678,9 +2686,11 @@ def main():
                                 float(
                                     spec.fov_deg
                                 ),
-                            scene_depth_m=scene_depth_by_camera[
-                                camera_name
-                            ],
+                            scene_depth_m=(
+                                None
+                                if args.he_renderer_version == "he_sprite_renderer_v1"
+                                else scene_depth_by_camera[camera_name]
+                            ),
                         )
                     )
 
@@ -3502,6 +3512,7 @@ def main():
                 occlusion = scene_occlusion_summary(composite)
                 row[f"{camera_name}_scene_depth_used"] = int(
                     args.condition == "he"
+                    and args.he_renderer_version != "he_sprite_renderer_v1"
                     and camera_name in scene_depth_by_camera
                 )
                 row[f"{camera_name}_occluded_actor_count"] = occlusion["occluded_actor_count"]

@@ -257,3 +257,6 @@ Thumbs.db
 desktop.ini
 
 external_models/
+
+# Local pre-release renderer workspace retained for historical traceability.
+/astra/

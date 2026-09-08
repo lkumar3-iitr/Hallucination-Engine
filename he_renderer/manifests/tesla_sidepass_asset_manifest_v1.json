@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "assets": [
+    {
+      "key": "vehicle.tesla.model3",
+      "folder": "tesla_model3_native_full_v3",
+      "close_banks": {
+        "left": "../sprite_bank_cartesian_close_targeted/tesla_model3_sidepass_level_left_v1",
+        "right": "../sprite_bank_cartesian_close_targeted/tesla_model3_sidepass_level_right_v1"
+      },
+      "aliases": [
+        "tesla_model3"
+      ]
+    }
+  ]
+}

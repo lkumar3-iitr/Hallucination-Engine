@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "assets": [
+    {
+      "key": "vehicle.passenger_02",
+      "folder": "nissan_patrol_2021_native_full_v3",
+      "close_banks": {
+        "left": "../sprite_bank_cartesian_close_targeted/nissan_patrol_2021_sidepass_level_left_v1",
+        "right": "../sprite_bank_cartesian_close_targeted/nissan_patrol_2021_sidepass_level_right_v1"
+      },
+      "aliases": [
+        "nissan_patrol_2021"
+      ]
+    }
+  ]
+}

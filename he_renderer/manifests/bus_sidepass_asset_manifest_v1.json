@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "assets": [
+    {
+      "key": "vehicle.bus_01",
+      "folder": "fuso_rosa_bus_native_full_v3",
+      "close_banks": {
+        "left": "../sprite_bank_cartesian_close_targeted/fuso_rosa_bus_sidepass_horizontal_u0575_fullrange_v2",
+        "right": "../sprite_bank_cartesian_close_targeted/fuso_rosa_bus_sidepass_horizontal_u0575_fullrange_v2"
+      },
+      "aliases": [
+        "fuso_rosa_bus"
+      ]
+    }
+  ]
+}
