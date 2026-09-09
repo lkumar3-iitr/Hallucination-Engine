@@ -92,7 +92,11 @@ def main() -> None:
     parser.add_argument("--destination-index", type=int, default=-1)
     parser.add_argument("--weather-preset", default=None)
     parser.add_argument("--max-frames", type=int, default=-1)
-    parser.add_argument("--he-renderer-version", choices=["v1", "v2"], default="v1")
+    parser.add_argument(
+        "--he-renderer-version",
+        choices=["v1", "v2", "he_sprite_renderer_v1"],
+        default="he_sprite_renderer_v1",
+    )
     parser.add_argument("--he-silhouette-scale", type=float, default=1.0)
     parser.add_argument(
         "--he-warp-scale-mode",

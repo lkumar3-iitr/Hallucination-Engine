@@ -1,0 +1,78 @@
+{
+  "schema_version": "1.0",
+  "release": "he_assets_sidepass_v1",
+  "created": "2026-09-09",
+  "source_git_commit": "f5e019a8d2127c76ffbdefe0a2e38b27786e6a5f",
+  "banks": {
+    "sprite_bank_native_production/tesla_model3_native_full_v3": {
+      "file_count": 21607,
+      "total_bytes": 12482473885,
+      "sha256": {
+        "asset_metadata.json": "91e008a961434b4d77d52da691faa4594bbe78d82ab02c478d1ebecf8d1704f6",
+        "selector_teacher_v1.npz": "4244d9f68a21c89f850a377f13556f0d410b592f7cb15cafe9e0af633b7e8fb4"
+      }
+    },
+    "sprite_bank_native_production/fuso_rosa_bus_native_full_v3": {
+      "file_count": 28806,
+      "total_bytes": 17554295874,
+      "sha256": {
+        "asset_metadata.json": "88d3d66e4549d6790596cbd06d62127bdd676817a4f967e4b759080b1fa81fa7",
+        "selector_teacher_v1.npz": "c13b4bbe2f6d40e5308ef54efcbf048ab2fce5b7b49b4a1fa747beb8d5b91859"
+      }
+    },
+    "sprite_bank_native_production/nissan_patrol_2021_native_full_v3": {
+      "file_count": 21606,
+      "total_bytes": 13247684105,
+      "sha256": {
+        "asset_metadata.json": "c168bec4817fbae1c11f022bdba1a8db036a67aab3738bc2919bf9d9a6472c94",
+        "selector_teacher_v1.npz": "e46335841cab4cca5c615579ab4d79ea887ff7e3c41ec6e02f4e6dcbacdbf78a"
+      }
+    },
+    "sprite_bank_native_production/pedestrian_0001_native_full_v3": {
+      "file_count": 21605,
+      "total_bytes": 11250697352,
+      "sha256": {
+        "asset_metadata.json": "7c0c711e69de68edd7405ddcf9eafe849944b292bb3139dfc8885a0239cae369",
+        "selector_teacher_v1.npz": "48a3a169bb982fdc590ecc5da3d5000f0ec0510115b2dc12c63a2d1533241384"
+      }
+    },
+    "sprite_bank_cartesian_close_targeted/tesla_model3_sidepass_level_left_v1": {
+      "file_count": 130,
+      "total_bytes": 31220836,
+      "sha256": {"asset_metadata.json": "c9b270a7c010e764239ebc78d01c63803f746641da4a644ba821cccadc96ae70"}
+    },
+    "sprite_bank_cartesian_close_targeted/tesla_model3_sidepass_level_right_v1": {
+      "file_count": 130,
+      "total_bytes": 29815005,
+      "sha256": {"asset_metadata.json": "3e2d1e88642d3d8cc06bedcf2b8020e13d2fa9d155e2bcd6ccf0dc8a1d6ded06"}
+    },
+    "sprite_bank_cartesian_close_targeted/fuso_rosa_bus_sidepass_horizontal_u0575_fullrange_v2": {
+      "file_count": 259,
+      "total_bytes": 245090990,
+      "sha256": {
+        "asset_metadata.json": "12b241da25097dbaa7670387cfad7bc6601306df088a5496c57cbe2cee46ec68",
+        "accepted_view_manifest.csv": "fd69a25ee4b5aecc679278a8c37464f0b6d7b9eade522d2e9a0b0c13acef1e01"
+      }
+    },
+    "sprite_bank_cartesian_close_targeted/nissan_patrol_2021_sidepass_level_left_v1": {
+      "file_count": 130,
+      "total_bytes": 45944342,
+      "sha256": {"asset_metadata.json": "c2607553e585cafeb188e7f6a77241cfb353f91abd52683f8a71a129d5bdad57"}
+    },
+    "sprite_bank_cartesian_close_targeted/nissan_patrol_2021_sidepass_level_right_v1": {
+      "file_count": 130,
+      "total_bytes": 46245287,
+      "sha256": {"asset_metadata.json": "7c60977eabb6219443f33ff8ef2999b5cfb9c688a862ce1f7c2f49d62d95fcc6"}
+    },
+    "sprite_bank_cartesian_close_targeted/pedestrian_0001_sidepass_level_left_v2": {
+      "file_count": 106,
+      "total_bytes": 4815271,
+      "sha256": {"asset_metadata.json": "627b230e4f8e59513ebfbc838b3e8f50155d34e99deac27cbab262925988e317"}
+    },
+    "sprite_bank_cartesian_close_targeted/pedestrian_0001_sidepass_level_right_v2": {
+      "file_count": 106,
+      "total_bytes": 4437544,
+      "sha256": {"asset_metadata.json": "7c400f243a1f713f9a54ee316731c9553627425008372dc672ede469dd92546a"}
+    }
+  }
+}

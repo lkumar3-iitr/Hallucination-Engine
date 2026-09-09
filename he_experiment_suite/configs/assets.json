@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0",
+  "asset_root_layout": {
+    "native_bank_root": "sprite_bank_native_production",
+    "close_bank_root": "sprite_bank_cartesian_close_targeted"
+  },
+  "assets": {
+    "tesla": {
+      "manifest": "he_renderer/manifests/tesla_sidepass_asset_manifest_v1.json",
+      "native_bank": "tesla_model3_native_full_v3",
+      "close_banks": [
+        "tesla_model3_sidepass_level_left_v1",
+        "tesla_model3_sidepass_level_right_v1"
+      ],
+      "require_distilled_selector": true
+    },
+    "bus": {
+      "manifest": "he_renderer/manifests/bus_sidepass_asset_manifest_v1.json",
+      "native_bank": "fuso_rosa_bus_native_full_v3",
+      "close_banks": [
+        "fuso_rosa_bus_sidepass_horizontal_u0575_fullrange_v2"
+      ],
+      "require_distilled_selector": true
+    },
+    "patrol": {
+      "manifest": "he_renderer/manifests/patrol_sidepass_asset_manifest_v1.json",
+      "native_bank": "nissan_patrol_2021_native_full_v3",
+      "close_banks": [
+        "nissan_patrol_2021_sidepass_level_left_v1",
+        "nissan_patrol_2021_sidepass_level_right_v1"
+      ],
+      "require_distilled_selector": true
+    },
+    "pedestrian": {
+      "manifest": "he_renderer/manifests/pedestrian_sidepass_asset_manifest_v1.json",
+      "native_bank": "pedestrian_0001_native_full_v3",
+      "close_banks": [
+        "pedestrian_0001_sidepass_level_left_v2",
+        "pedestrian_0001_sidepass_level_right_v2"
+      ],
+      "require_distilled_selector": true
+    }
+  }
+}

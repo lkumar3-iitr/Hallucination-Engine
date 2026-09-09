@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "models": {
+    "tcp": {
+      "adapter": "driving_models/TCP/tcp_adapter_v1.py",
+      "class": "TCPAdapterV1"
+    },
+    "neat": {
+      "adapter": "driving_models/NEAT/neat_adapter_v1.py",
+      "class": "NEATAdapterV1"
+    },
+    "cilpp": {
+      "adapter": "driving_models/CILPP/cilpp_adapter_v1.py",
+      "class": "CILPPAdapterV1"
+    },
+    "aimmt": {
+      "adapter": "driving_models/AIMMT/aimmt_adapter_v1.py",
+      "class": "AIMMTAdapterV1"
+    }
+  }
+}

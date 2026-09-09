@@ -37,6 +37,11 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=2000)
     parser.add_argument("--weather-preset", default=None)
+    parser.add_argument(
+        "--he-renderer-version",
+        choices=["v1", "v2", "he_sprite_renderer_v1"],
+        default="he_sprite_renderer_v1",
+    )
     parser.add_argument("--he-silhouette-scale", type=float, default=1.0)
     parser.add_argument(
         "--he-warp-scale-mode",
@@ -77,6 +82,7 @@ def main() -> None:
         "--device", args.device,
         "--host", args.host,
         "--port", str(args.port),
+        "--he-renderer-version", args.he_renderer_version,
         "--he-silhouette-scale", str(args.he_silhouette_scale),
         "--he-warp-scale-mode", str(args.he_warp_scale_mode),
         "--he-viewpoint-lateral-sign", str(args.he_viewpoint_lateral_sign),

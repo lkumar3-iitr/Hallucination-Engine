@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "scenarios": {
+    "tesla_sidepass": "he_renderer/scenarios/static_left_tesla_ego_overtakes_200.resolved_v2.json",
+    "bus_sidepass": "he_renderer/scenarios/static_left_bus_ego_overtakes_200.resolved_v2.json",
+    "patrol_sidepass": "he_renderer/scenarios/static_left_patrol_ego_overtakes_200.resolved_v2.json",
+    "pedestrian_sidepass": "he_renderer/scenarios/static_left_pedestrian_ego_overtakes_200.resolved_v2.json",
+    "neat_long_40s": "he_renderer/scenarios/signalized_lead_follow_001.resolved_v2.json",
+    "paper_suite": "important_curated_scenarios/suite_manifest.json",
+    "targeted_overtake_suite": "important_curated_scenarios/overtake_static_targeted_suite_manifest_v1.json",
+    "multi_actor_suite": "important_curated_scenarios/multi_actor_safety_critical_suite_manifest_v1.json"
+  }
+}
