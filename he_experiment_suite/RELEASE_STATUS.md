@@ -23,15 +23,16 @@ Status date: 2026-09-09
 - Frozen 20-scenario paper suite rebuilt and validated: 15 collision-free and
   5 collision-required controls.
 - Four-model, two-condition campaign expanded to 160 commands in dry-run mode.
+- TCP, NEAT, CIL++, and AIM-MT each completed the 801-frame ClearNoon
+  `signalized_lead_follow_001` scenario under CARLA and HE.
+- Four synchronized long-run comparison videos passed critical-frame review.
 
 ## Evaluation Gate
 
-Before launching the full campaign, run one short matched CARLA/HE smoke case
-for each of TCP, NEAT, CIL++, and AIM-MT with its native camera configuration.
-Inspect the composited camera videos and confirm that run metadata records
-`he_sprite_renderer_v1`. This gate checks checkpoint availability, adapter
-camera calibration, synchronization, and live CARLA integration; it is not a
-new renderer-development phase.
+The live integration gate is complete for TCP, NEAT, CIL++, and AIM-MT. The
+next stage is the repeated full evaluation campaign. Preserve per-repeat seeds
+and report confidence intervals; do not treat the single readiness runs as the
+final behavioral estimates. See `CLEAR_WEATHER_READINESS_RESULTS.md`.
 
 Depth-based scene occlusion remains outside this release and should be added as
 a separately measured compositor revision after the non-occlusion evaluation

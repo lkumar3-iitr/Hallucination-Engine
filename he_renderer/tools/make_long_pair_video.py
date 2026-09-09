@@ -55,9 +55,9 @@ def main():
         canvas[header:header + height] = carla_frame
         he_top = height + 2 * header
         canvas[he_top:he_top + height] = he_frame
-        cv2.putText(canvas, "CARLA physical - front | left | right", (12, 23),
+        cv2.putText(canvas, "CARLA physical - native camera view(s)", (12, 23),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.62, (80, 255, 80), 1, cv2.LINE_AA)
-        cv2.putText(canvas, "HE ASTRA optimized - front | left | right", (12, height + header + 23),
+        cv2.putText(canvas, "HE he_sprite_renderer_v1 - native camera view(s)", (12, height + header + 23),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.62, (80, 180, 255), 1, cv2.LINE_AA)
         stamp = f"frame {frame_index:04d}   t={frame_index / fps:05.2f}s"
         (text_width, _), _ = cv2.getTextSize(stamp, cv2.FONT_HERSHEY_SIMPLEX, 0.58, 1)
