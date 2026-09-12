@@ -1,0 +1,9 @@
+{
+  "status": "experimental_not_promoted",
+  "assets": [
+    {"blueprint": "vehicle.mitsubishi.fusorosa", "close_bank": "artifacts/bus_aimed_close_v3"},
+    {"blueprint": "vehicle.tesla.model3", "close_bank": "artifacts/tesla_aimed_close_compact_v2"},
+    {"blueprint": "vehicle.nissan.patrol_2021", "close_bank": "artifacts/patrol_aimed_close_compact_v1"},
+    {"blueprint": "walker.pedestrian.0001", "close_bank": "artifacts/pedestrian_aimed_close_compact_v1", "enabled": false, "reason": "awaiting pedestrian visual and geometry acceptance"}
+  ]
+}

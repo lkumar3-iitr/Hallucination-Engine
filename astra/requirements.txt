@@ -1,0 +1,6 @@
+numpy
+scipy
+opencv-python
+
+# CARLA must match the simulator installation and is normally provided by the
+# existing Hallucination Engine environment rather than installed from PyPI.
