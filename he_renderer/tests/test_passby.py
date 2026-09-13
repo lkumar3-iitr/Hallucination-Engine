@@ -10,9 +10,18 @@ from he_renderer.renderer import (
     reproject_sprite_reference,
 )
 from he_renderer.selector import iou_scores, packed_iou_scores, project, relative_matrix
+from he_renderer.compositor import HESpriteRendererCompositor
 
 
 class SidePassTests(unittest.TestCase):
+    def test_production_close_bank_rejects_unsupported_turning_yaw(self):
+        compositor = HESpriteRendererCompositor()
+        close = compositor.close_renderer
+        self.assertTrue(close._close_yaw_is_supported(0.0, 0.0))
+        self.assertTrue(close._close_yaw_is_supported(359.0, 0.0))
+        self.assertFalse(close._close_yaw_is_supported(77.0, 0.0))
+        self.assertFalse(close._close_yaw_is_supported(105.0, 0.0))
+
     def test_compiled_reprojection_matches_reference_visibility(self):
         rng = np.random.default_rng(20260908)
         background = rng.integers(0, 256, (72, 128, 3), dtype=np.uint8)

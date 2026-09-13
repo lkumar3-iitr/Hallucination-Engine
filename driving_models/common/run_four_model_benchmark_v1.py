@@ -24,6 +24,7 @@ DEFAULT_SUITE = (
     / "suite_manifest.json"
 )
 DEFAULT_OUTPUT = REPO_ROOT / "driving_models" / "outputs" / "smooth_safety_suite_v1"
+DEFAULT_MANIFEST = REPO_ROOT / "he_renderer" / "manifests" / "paper_assets_manifest_v1.json"
 
 
 def sha256(path: Path) -> str:
@@ -80,6 +81,7 @@ def main() -> None:
     )
     parser.add_argument("--suite-manifest", type=Path, default=DEFAULT_SUITE)
     parser.add_argument("--asset-root", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--models", nargs="+", default=["tcp", "neat", "cilpp", "aimmt"])
     parser.add_argument("--conditions", nargs="+", choices=["carla", "he"], default=["carla", "he"])
@@ -94,7 +96,7 @@ def main() -> None:
     parser.add_argument("--max-frames", type=int, default=-1)
     parser.add_argument(
         "--he-renderer-version",
-        choices=["v1", "v2", "he_sprite_renderer_v1"],
+        choices=["v1", "v2", "he_sprite_renderer_v1", "he_calibrated_renderer_v2"],
         default="he_sprite_renderer_v1",
     )
     parser.add_argument("--he-silhouette-scale", type=float, default=1.0)
@@ -141,6 +143,8 @@ def main() -> None:
         "suite_manifest": str(suite_path),
         "suite_manifest_sha256": sha256(suite_path),
         "asset_root": str(args.asset_root.resolve()),
+        "asset_manifest": str(args.manifest.resolve()),
+        "asset_manifest_sha256": sha256(args.manifest.resolve()),
         "git_commit": git_value("rev-parse", "HEAD"),
         "git_branch": git_value("branch", "--show-current"),
         "git_dirty": bool(git_value("status", "--porcelain")),
@@ -182,6 +186,7 @@ def main() -> None:
                         "--device", args.device,
                         "--resolved", str(resolved),
                         "--asset-root", str(args.asset_root.resolve()),
+                        "--manifest", str(args.manifest.resolve()),
                         "--condition", condition,
                         "--host", args.host,
                         "--port", str(args.port),
@@ -211,6 +216,11 @@ def main() -> None:
                         command.extend([
                             "--pre-trigger-source-frame",
                             str(case["pre_trigger_source_frame"]),
+                        ])
+                    for actor_id in case.get("trigger_gated_actor_ids", []):
+                        command.extend([
+                            "--trigger-gated-actor-id",
+                            str(actor_id),
                         ])
                     environment_rel = case.get("environment")
                     if environment_rel:

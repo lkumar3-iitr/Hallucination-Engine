@@ -27,6 +27,10 @@ class HESpriteRendererCompositor:
             warp_scale_mode=warp_scale_mode,
             viewpoint_lateral_sign=viewpoint_lateral_sign,
         )
+        # Targeted close banks capture near-parallel side-pass geometry. A
+        # nearest-yaw lookup outside that domain can substitute a front/rear
+        # view during turns, so unsupported yaws use the native 4320 bank.
+        self.close_renderer.close_max_yaw_error_deg = 10.0
 
     def render(self, base_rgb, camera_tf, active_actors, width, height, fov, scene_depth_m=None):
         if scene_depth_m is not None:

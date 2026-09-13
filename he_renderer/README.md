@@ -1,5 +1,17 @@
 # HE Sprite Renderer
 
+## Current Calibrated Backend
+
+Use `he_calibrated_renderer_v2` for the migrated GPU implementation with
+calibrated Bus/Tesla/Patrol close rendering and scene-depth occlusion.
+See [Migration and evaluation entry points](MIGRATION_V2.md) for dependencies,
+offline gates and the pending live smoke test. `HECalibratedCompositor` is
+available as a named package export. The version-1 APIs below remain baselines;
+they have not been silently replaced. Use the dedicated v2 launchers for new
+evaluation runs.
+
+## Version-1 Baseline
+
 `he_sprite_renderer_v1` is the frozen production renderer for the current
 Hallucination Engine experiments. It composites actors from pre-generated
 CARLA sprite banks using only actor pose, camera pose, camera intrinsics, bank

@@ -219,6 +219,7 @@ def main():
             "event_source_start_s": case["event_source_start_s"],
             "trigger_route_progress_m": case["trigger_route_progress_m"],
             "pre_trigger_source_frame": case.get("pre_trigger_source_frame"),
+            "trigger_gated_actor_ids": case.get("trigger_gated_actor_ids", []),
             "expected_outcome": case["expected_outcome"],
             "duration_s": base.DURATION_S,
             "fps": base.FPS,

@@ -897,21 +897,24 @@ class HEAssetRegistry:
             )
         for side, close_folder in close_banks.items():
             side_key = _clean_string(side).lower()
-            folder_text = _clean_string(close_folder)
-            if not side_key or not folder_text:
+            folders = close_folder if isinstance(close_folder, list) else [close_folder]
+            folder_texts = [_clean_string(folder) for folder in folders]
+            folder_texts = [folder for folder in folder_texts if folder]
+            if not side_key or not folder_texts:
                 continue
-            close_dir = (
-                self.asset_root
-                /
-                folder_text
-            ).resolve()
-            close_csv = close_dir / "view_matrix.csv"
-            if not close_csv.exists():
-                raise FileNotFoundError(
-                    f"{key}: missing close-bank view_matrix.csv "
-                    f"for {side_key}:\n{close_csv}"
-                )
-            close_view_matrix_csvs[side_key] = close_csv
+            close_csvs = []
+            for folder_text in folder_texts:
+                close_dir = (self.asset_root / folder_text).resolve()
+                close_csv = close_dir / "view_matrix.csv"
+                if not close_csv.exists():
+                    raise FileNotFoundError(
+                        f"{key}: missing close-bank view_matrix.csv "
+                        f"for {side_key}:\n{close_csv}"
+                    )
+                close_csvs.append(close_csv)
+            close_view_matrix_csvs[side_key] = (
+                close_csvs[0] if len(close_csvs) == 1 else tuple(close_csvs)
+            )
 
         # ----------------------------------------------------
         # Read production view matrix

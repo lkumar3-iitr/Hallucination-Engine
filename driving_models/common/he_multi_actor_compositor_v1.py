@@ -82,7 +82,7 @@ class ActorCameraState:
 
     he_view_matrix_csv: str
 
-    he_close_view_matrix_csvs: Dict[str, str]
+    he_close_view_matrix_csvs: Dict[str, Any]
 
 
 @dataclass
@@ -103,7 +103,7 @@ class ActorRenderResult:
 
     he_view_matrix_csv: str
 
-    he_close_view_matrix_csvs: Dict[str, str]
+    he_close_view_matrix_csvs: Dict[str, Any]
 
     rendered: bool
     he_metadata: Dict[str, Any]
@@ -361,9 +361,12 @@ def actor_to_camera_state(
     if close_csvs is None:
         close_csvs = {}
     close_csvs = {
-        str(side): str(path)
-        for side, path
-        in dict(close_csvs).items()
+        str(side): (
+            [str(path) for path in paths]
+            if isinstance(paths, (list, tuple))
+            else str(paths)
+        )
+        for side, paths in dict(close_csvs).items()
     }
 
     return ActorCameraState(
@@ -416,6 +419,7 @@ class HEMultiActorCompositorV1:
     close_inner_margin_cells = 0.5
     close_outer_margin_cells = 0.5
     close_inner_min_bbox_clearance_m = None
+    close_max_yaw_error_deg = None
 
     def __init__(
         self,
@@ -570,6 +574,17 @@ class HEMultiActorCompositorV1:
             }
         return self._close_bank_cache[key]
 
+    def _get_close_banks_for_side(self, configured, query_up_m):
+        paths = configured if isinstance(configured, (list, tuple)) else [configured]
+        banks = [self._get_close_bank_for_csv(path) for path in paths]
+        return sorted(
+            banks,
+            key=lambda bank: min(
+                abs(float(up_m) - float(query_up_m))
+                for up_m in bank["up_values"]
+            ),
+        )
+
     @staticmethod
     def _close_row_path(
         bank,
@@ -600,6 +615,13 @@ class HEMultiActorCompositorV1:
             360.0
             -
             180.0
+        )
+
+    def _close_yaw_is_supported(self, query_yaw, selected_yaw) -> bool:
+        if self.close_max_yaw_error_deg is None:
+            return True
+        return self._angle_error_deg(query_yaw, selected_yaw) <= float(
+            self.close_max_yaw_error_deg
         )
 
     @staticmethod
@@ -647,11 +669,11 @@ class HEMultiActorCompositorV1:
         # from the actor origin during an oblique cut-in.  Use that same point
         # for side selection as well as for the Cartesian lookup.
         side = "right" if right_m > 0.0 else "left"
-        csv_path = state.he_close_view_matrix_csvs.get(side)
-        if not csv_path:
+        configured_banks = state.he_close_view_matrix_csvs.get(side)
+        if not configured_banks:
             return None
 
-        bank = self._get_close_bank_for_csv(csv_path)
+        bank = self._get_close_banks_for_side(configured_banks, up_m)[0]
 
         forward_min = min(bank["forward_values"])
         forward_max = max(bank["forward_values"])
@@ -712,6 +734,8 @@ class HEMultiActorCompositorV1:
             bank["yaw_values"],
             key=lambda value: self._angle_error_deg(value, state.rel_yaw_deg),
         )
+        if not self._close_yaw_is_supported(state.rel_yaw_deg, selected_yaw):
+            return None
         forward_lower, forward_upper, forward_weight = self._bracket(
             bank["forward_values"], forward_m
         )
@@ -804,8 +828,8 @@ class HEMultiActorCompositorV1:
         up_m = float(camera_center[2])
 
         side = "right" if right_m > 0.0 else "left"
-        csv_path = state.he_close_view_matrix_csvs.get(side)
-        if not csv_path:
+        configured_banks = state.he_close_view_matrix_csvs.get(side)
+        if not configured_banks:
             return {
                 "active": False,
                 "reason": f"missing_{side}_close_bank",
@@ -815,7 +839,7 @@ class HEMultiActorCompositorV1:
                 ),
             }
 
-        bank = self._get_close_bank_for_csv(csv_path)
+        bank = self._get_close_banks_for_side(configured_banks, up_m)[0]
 
         forward_min = min(bank["forward_values"])
         forward_max = max(bank["forward_values"])
@@ -873,6 +897,16 @@ class HEMultiActorCompositorV1:
                 reasons.append("elevation_outside_close_bank")
         else:
             elevation_delta_deg = None
+        selected_yaw = min(
+            bank["yaw_values"],
+            key=lambda value: self._angle_error_deg(value, state.rel_yaw_deg),
+        )
+        yaw_delta_deg = self._angle_error_deg(
+            selected_yaw,
+            state.rel_yaw_deg,
+        )
+        if not self._close_yaw_is_supported(state.rel_yaw_deg, selected_yaw):
+            reasons.append("yaw_outside_close_bank")
 
         return {
             "active": False,
@@ -899,6 +933,7 @@ class HEMultiActorCompositorV1:
                 ],
             },
             "elevation_delta_deg": elevation_delta_deg,
+            "yaw_delta_deg": yaw_delta_deg,
         }
 
     def _render_close_cartesian(

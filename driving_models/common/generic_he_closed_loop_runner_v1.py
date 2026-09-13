@@ -42,6 +42,7 @@ import json
 import math
 import queue
 import sys
+import time
 import importlib.util
 from pathlib import Path
 import cv2
@@ -1098,6 +1099,17 @@ def sync_carla_scenario_actors(
             transform
         )
 
+
+def filter_trigger_gated_actors(active_states, trigger_frame, actor_ids):
+    """Suppress explicitly gated actors until the route event has triggered."""
+    gated_ids = {str(actor_id) for actor_id in (actor_ids or [])}
+    if trigger_frame is not None or not gated_ids:
+        return list(active_states)
+    return [
+        state for state in active_states
+        if str(state.actor_id) not in gated_ids
+    ]
+
 # ============================================================
 # HE compositor diagnostics
 # ============================================================
@@ -1444,6 +1456,15 @@ def main():
         help="Optional authored staging frame held before the route trigger.",
     )
     parser.add_argument(
+        "--trigger-gated-actor-id",
+        action="append",
+        default=[],
+        help=(
+            "Actor ID to suppress before the route trigger. Repeat for "
+            "multiple actors. Applies identically to CARLA and HE."
+        ),
+    )
+    parser.add_argument(
         "--resolved",
         default=str(
             DEFAULT_RESOLVED
@@ -1477,11 +1498,12 @@ def main():
     )
     parser.add_argument(
         "--he-renderer-version",
-        choices=["v1", "v2", "he_sprite_renderer_v1"],
+        choices=["v1", "v2", "he_sprite_renderer_v1", "he_calibrated_renderer_v2"],
         default="v1",
         help=(
             "HE compositor implementation. V1 remains the control/default; "
-            "he_sprite_renderer_v1 selects the calibrated production sprite backend."
+            "he_sprite_renderer_v1 selects the legacy sprite backend; "
+            "he_calibrated_renderer_v2 selects calibrated GPU rendering with scene depth."
         ),
     )
 
@@ -1642,7 +1664,14 @@ def main():
             "Defaults to rgb_central/front/first camera."
         ),
     )
+    parser.add_argument('--he-calibrated-manifest', type=str, default=None)
+    parser.add_argument('--stop-on-collision', action=argparse.BooleanOptionalAction,
+                        default=True, help='End at first scenario-actor footprint overlap, before rendering.')
+    parser.add_argument('--he-pedestrian-gpu', action='store_true',
+                        help='Opt-in pedestrian GPU candidate; calibrated renderer v2 only.')
     args = parser.parse_args()
+    if args.he_pedestrian_gpu and args.he_renderer_version != 'he_calibrated_renderer_v2':
+        parser.error('--he-pedestrian-gpu requires he_calibrated_renderer_v2')
 
     # ========================================================
     # Resolve paths
@@ -2145,7 +2174,13 @@ def main():
             "v2": HEMultiActorCompositorV2,
             "he_sprite_renderer_v1": HESpriteRendererCompositor,
         }
+        if args.he_renderer_version == "he_calibrated_renderer_v2":
+            from he_renderer.calibrated.compositor import HECalibratedCompositor
+            compositor_classes["he_calibrated_renderer_v2"] = HECalibratedCompositor
         compositor_class = compositor_classes[args.he_renderer_version]
+        candidate_options = ({'pedestrian_gpu': args.he_pedestrian_gpu,
+                              'calibrated_manifest': args.he_calibrated_manifest}
+                             if args.he_renderer_version == 'he_calibrated_renderer_v2' else {})
         compositor = (
             compositor_class(
                 distance_selection_mode=
@@ -2158,6 +2193,7 @@ def main():
                 silhouette_scale=float(args.he_silhouette_scale),
                 warp_scale_mode=str(args.he_warp_scale_mode),
                 viewpoint_lateral_sign=float(args.he_viewpoint_lateral_sign),
+                **candidate_options,
             )
         )
         # ====================================================
@@ -2283,8 +2319,10 @@ def main():
                 world=world,
                 carla_map=carla_map,
                 actor_by_id=scenario_carla_actors,
-                active_states=runtime.active_actors(
-                    actor_source_frame
+                active_states=filter_trigger_gated_actors(
+                    runtime.active_actors(actor_source_frame),
+                    event_clock.trigger_frame,
+                    args.trigger_gated_actor_id,
                 ),
             )
         # ====================================================
@@ -2472,6 +2510,11 @@ def main():
             "brake",
             "bootstrap",
 
+            "camera_count",
+            "he_render_latency_ms",
+            "model_inference_latency_ms",
+            "frame_processing_latency_ms",
+
             "command_name",
             "command_value",
             "target_x",
@@ -2571,6 +2614,12 @@ def main():
         max_brake = 0.0
         previous_speed_mps = None
         previous_acceleration_mps2 = None
+        render_latencies_ms = []
+        inference_latencies_ms = []
+        processing_latencies_ms = []
+        run_started_at = time.perf_counter()
+        collision_event = None
+        termination_reason = 'horizon'
 
         # ====================================================
         # Scenario loop
@@ -2580,6 +2629,8 @@ def main():
             start_frame,
             end_frame + 1,
         ):
+
+            frame_started_at = time.perf_counter()
 
             t_s = (
                 float(
@@ -2618,11 +2669,34 @@ def main():
             # Scenario actors
             # ------------------------------------------------
 
-            active_actors = list(
-                runtime.active_actors(
-                    actor_source_frame
-                )
+            active_actors = filter_trigger_gated_actors(
+                runtime.active_actors(actor_source_frame),
+                event_clock.trigger_frame,
+                args.trigger_gated_actor_id,
             )
+
+            # Contact is terminal before HE rendering or another model decision.
+            # Use the same geometric criterion for physical and virtual actors.
+            if args.stop_on_collision:
+                contact_tf = ego.get_transform()
+                contact = nearest_actor_footprint_metrics(
+                    ego_x_m=contact_tf.location.x, ego_y_m=contact_tf.location.y,
+                    ego_yaw_deg=contact_tf.rotation.yaw, ego_length_m=ego_length_m,
+                    ego_width_m=ego_width_m, actors=active_actors)
+                if contact is not None and contact['overlaps']:
+                    termination_reason = 'collision'
+                    collision_event = dict(
+                        criterion='scenario_actor_2d_footprint_overlap',
+                        scenario_frame=int(scenario_frame), t_s=float(t_s),
+                        actor_source_frame=int(actor_source_frame),
+                        actor_id=contact['actor_id'], physical_overlap=True,
+                        ego_x_m=float(contact_tf.location.x), ego_y_m=float(contact_tf.location.y),
+                        ego_yaw_deg=float(contact_tf.rotation.yaw),
+                        rendered=False, model_executed=False)
+                    (output_dir / 'collision_event.json').write_text(
+                        json.dumps(collision_event, indent=2) + '\n', encoding='utf-8')
+                    print(f"[stop] COLLISION actor={contact['actor_id']} frame={scenario_frame} t={t_s:.3f}s", flush=True)
+                    break
 
             # ------------------------------------------------
             # Render independently into every native camera
@@ -2639,6 +2713,8 @@ def main():
                 for spec in
                 adapter.camera_specs()
             }
+
+            render_started_at = time.perf_counter()
 
             for camera_name in (
                 camera_names
@@ -2719,6 +2795,12 @@ def main():
                 ] = (
                     output_rgb
                 )
+
+            he_render_latency_ms = (
+                (time.perf_counter() - render_started_at) * 1000.0
+                if args.condition == "he"
+                else 0.0
+            )
 
             # ------------------------------------------------
             # Save HE-composited native-camera video
@@ -2850,6 +2932,7 @@ def main():
             # Model inference
             # ------------------------------------------------
 
+            inference_started_at = time.perf_counter()
             result = (
                 adapter.step(
                     rgb_by_camera=
@@ -2867,6 +2950,9 @@ def main():
                         start_frame,
                 )
             )
+            model_inference_latency_ms = (
+                time.perf_counter() - inference_started_at
+            ) * 1000.0
 
             control = (
                 result.control
@@ -3144,6 +3230,10 @@ def main():
                 or {}
             )
 
+            frame_processing_latency_ms = (
+                time.perf_counter() - frame_started_at
+            ) * 1000.0
+
             row = {
                 "scenario_id":
                     scenario_id,
@@ -3305,6 +3395,11 @@ def main():
                     len(
                         active_actors
                     ),
+
+                "camera_count": len(camera_names),
+                "he_render_latency_ms": he_render_latency_ms,
+                "model_inference_latency_ms": model_inference_latency_ms,
+                "frame_processing_latency_ms": frame_processing_latency_ms,
                 "nearest_actor_id":
                     (
                         "" if footprint_metrics is None
@@ -3676,6 +3771,9 @@ def main():
             )
 
             completed_frames += 1
+            render_latencies_ms.append(he_render_latency_ms)
+            inference_latencies_ms.append(model_inference_latency_ms)
+            processing_latencies_ms.append(frame_processing_latency_ms)
 
             # ------------------------------------------------
             # Debug
@@ -3763,6 +3861,7 @@ def main():
                     "[stop] destination reached"
                 )
 
+                termination_reason = 'destination_reached'
                 break
 
             if (
@@ -3777,6 +3876,7 @@ def main():
                     "[stop] route deviation limit exceeded"
                 )
 
+                termination_reason = 'route_deviation'
                 break
 
             # ------------------------------------------------
@@ -3830,10 +3930,11 @@ def main():
                         carla_map=carla_map,
                         actor_by_id=
                             scenario_carla_actors,
-                        active_states=
-                            runtime.active_actors(
-                                actor_source_frame
-                            ),
+                        active_states=filter_trigger_gated_actors(
+                            runtime.active_actors(actor_source_frame),
+                            event_clock.trigger_frame,
+                            args.trigger_gated_actor_id,
+                        ),
                     )
                 current_frame = (
                     world.tick()
@@ -3860,6 +3961,56 @@ def main():
         # ====================================================
         # Final
         # ====================================================
+
+        run_wall_time_s = time.perf_counter() - run_started_at
+        measured = slice(min(20, completed_frames), None)
+
+        def timing_summary(values):
+            samples = np.asarray(values[measured], dtype=np.float64)
+            if not len(samples):
+                return {"samples": 0, "mean_ms": None, "p50_ms": None,
+                        "p95_ms": None, "p99_ms": None, "max_ms": None}
+            return {
+                "samples": int(len(samples)),
+                "mean_ms": float(np.mean(samples)),
+                "p50_ms": float(np.percentile(samples, 50)),
+                "p95_ms": float(np.percentile(samples, 95)),
+                "p99_ms": float(np.percentile(samples, 99)),
+                "max_ms": float(np.max(samples)),
+            }
+
+        runtime_summary = {
+            "schema": "he_runtime_summary_v1",
+            "scenario_id": scenario_id,
+            "model": adapter.model_name,
+            "condition": args.condition,
+            "weather_preset": weather_preset_name or "",
+            "frames": int(completed_frames),
+            "termination_reason": termination_reason,
+            "stop_on_collision": bool(args.stop_on_collision),
+            "collision_event": collision_event,
+            "frame_count_contract": "rendered/model-processed frames; terminal collision is recorded separately",
+            "camera_count": int(len(camera_names)),
+            "warmup_frames_excluded": int(min(20, completed_frames)),
+            "wall_time_s": float(run_wall_time_s),
+            "end_to_end_fps": (
+                float(completed_frames / run_wall_time_s)
+                if run_wall_time_s > 0.0 else None
+            ),
+            "real_time_factor": (
+                float(completed_frames / (run_wall_time_s * fps))
+                if run_wall_time_s > 0.0 else None
+            ),
+            "he_render": timing_summary(render_latencies_ms),
+            "model_inference": timing_summary(inference_latencies_ms),
+            "frame_processing": timing_summary(processing_latencies_ms),
+        }
+        runtime_summary_path = output_dir / (
+            f"{scenario_id}_{adapter.model_name}_{args.condition}_runtime_summary.json"
+        )
+        runtime_summary_path.write_text(
+            json.dumps(runtime_summary, indent=2) + "\n", encoding="utf-8"
+        )
 
         print()
         print("=" * 78)
@@ -3892,6 +4043,9 @@ def main():
             "csv:",
             csv_path,
         )
+
+        print("runtime summary:", runtime_summary_path)
+        print("end-to-end FPS:", f"{runtime_summary['end_to_end_fps']:.3f}")
 
         print("=" * 78)
 

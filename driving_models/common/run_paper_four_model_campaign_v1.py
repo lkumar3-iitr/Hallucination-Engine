@@ -17,6 +17,7 @@ SUITE = (
     / "suite_manifest.json"
 )
 DEFAULT_OUTPUT = ROOT / "driving_models" / "outputs" / "paper_safety_suite_v1"
+DEFAULT_MANIFEST = ROOT / "he_renderer" / "manifests" / "paper_assets_manifest_v1.json"
 
 
 def run(command: list[str]) -> None:
@@ -32,14 +33,20 @@ def main() -> None:
         )
     )
     parser.add_argument("--asset-root", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=2000)
-    parser.add_argument("--weather-preset", default=None)
+    parser.add_argument(
+        "--weather-preset",
+        choices=["ClearNoon"],
+        default="ClearNoon",
+        help="Frozen paper weather. Rain is excluded from this campaign.",
+    )
     parser.add_argument(
         "--he-renderer-version",
-        choices=["v1", "v2", "he_sprite_renderer_v1"],
+        choices=["v1", "v2", "he_sprite_renderer_v1", "he_calibrated_renderer_v2"],
         default="he_sprite_renderer_v1",
     )
     parser.add_argument("--he-silhouette-scale", type=float, default=1.0)
@@ -76,6 +83,7 @@ def main() -> None:
         sys.executable, str(ORCHESTRATOR),
         "--suite-manifest", str(SUITE),
         "--asset-root", str(args.asset_root),
+        "--manifest", str(args.manifest),
         "--output-root", str(args.output_root),
         "--models", "tcp", "neat", "cilpp", "aimmt",
         "--conditions", "carla", "he",

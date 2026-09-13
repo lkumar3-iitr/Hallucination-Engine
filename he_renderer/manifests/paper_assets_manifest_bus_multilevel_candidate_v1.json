@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "assets": [
+    {
+      "key": "vehicle.passenger_01",
+      "folder": "tesla_model3_native_full_v3",
+      "close_banks": {
+        "left": "../sprite_bank_cartesian_close_targeted/tesla_model3_sidepass_level_left_v1",
+        "right": "../sprite_bank_cartesian_close_targeted/tesla_model3_sidepass_level_right_v1"
+      },
+      "aliases": ["vehicle.tesla.model3", "tesla_model3"]
+    },
+    {
+      "key": "vehicle.passenger_02",
+      "folder": "nissan_patrol_2021_native_full_v3",
+      "close_banks": {
+        "left": "../sprite_bank_cartesian_close_targeted/nissan_patrol_2021_sidepass_level_left_v1",
+        "right": "../sprite_bank_cartesian_close_targeted/nissan_patrol_2021_sidepass_level_right_v1"
+      },
+      "aliases": ["nissan_patrol_2021"]
+    },
+    {
+      "key": "vehicle.bus_01",
+      "folder": "fuso_rosa_bus_native_full_v3",
+      "close_banks": {
+        "left": [
+          "../sprite_bank_cartesian_close_targeted/fuso_rosa_bus_sidepass_horizontal_u0575_lateral5_v3",
+          "../sprite_bank_cartesian_close_targeted/fuso_rosa_bus_sidepass_neat_u_m0173_lateral5_v1"
+        ],
+        "right": [
+          "../sprite_bank_cartesian_close_targeted/fuso_rosa_bus_sidepass_horizontal_u0575_lateral5_v3",
+          "../sprite_bank_cartesian_close_targeted/fuso_rosa_bus_sidepass_neat_u_m0173_lateral5_v1"
+        ]
+      },
+      "aliases": ["fuso_rosa_bus"]
+    },
+    {
+      "key": "pedestrian.person_01",
+      "folder": "pedestrian_0001_native_full_v3",
+      "close_banks": {
+        "left": "../sprite_bank_cartesian_close_targeted/pedestrian_0001_sidepass_level_left_v2",
+        "right": "../sprite_bank_cartesian_close_targeted/pedestrian_0001_sidepass_level_right_v2"
+      },
+      "aliases": ["pedestrian_0001"]
+    }
+  ]
+}

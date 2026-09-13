@@ -1,0 +1,9 @@
+{
+  "renderer_version": "he_calibrated_renderer_v2",
+  "assets": [
+    {"blueprint": "vehicle.mitsubishi.fusorosa", "close_bank": "../assets/calibrated_close/bus"},
+    {"blueprint": "vehicle.tesla.model3", "close_bank": "../assets/calibrated_close/tesla"},
+    {"blueprint": "vehicle.nissan.patrol_2021", "close_bank": "../assets/calibrated_close/patrol"}
+  ],
+  "pedestrian_backend": "legacy_pedestrian"
+}

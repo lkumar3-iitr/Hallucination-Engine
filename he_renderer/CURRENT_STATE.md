@@ -1,5 +1,12 @@
 # HE Sprite Renderer Current State
 
+The current calibrated backend is `he_calibrated_renderer_v2`; see
+[MIGRATION_V2.md](MIGRATION_V2.md). Offline migration gates passed; live smoke
+is pending simulator restart. The historical version-1 state below is retained
+as baseline evidence, not the current v2 feature or performance specification.
+
+## Version-1 Historical State
+
 Status date: 2026-09-08
 
 Accepted renderer: `he_sprite_renderer_v1`
